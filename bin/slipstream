@@ -137,12 +137,42 @@ def _migrate(conn: sqlite3.Connection) -> None:
             ts          REAL NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS session_intents (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL UNIQUE,
+            intent     TEXT NOT NULL,
+            cwd        TEXT,
+            ts         REAL NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS decision_log (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id   TEXT NOT NULL,
+            ts           REAL NOT NULL,
+            tool_name    TEXT,
+            file_path    TEXT,
+            description  TEXT,
+            prompt_ctx   TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS alerts (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT NOT NULL,
+            ts         REAL NOT NULL,
+            kind       TEXT NOT NULL,
+            severity   TEXT NOT NULL,
+            message    TEXT NOT NULL,
+            details    TEXT
+        );
+
         CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
         CREATE INDEX IF NOT EXISTS idx_turns_ts ON turns(ts);
         CREATE INDEX IF NOT EXISTS idx_tool_uses_session ON tool_uses(session_id);
         CREATE INDEX IF NOT EXISTS idx_tool_uses_tool ON tool_uses(tool_name);
         CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
         CREATE INDEX IF NOT EXISTS idx_snapshots_session ON snapshots(session_id);
+        CREATE INDEX IF NOT EXISTS idx_decision_log_file ON decision_log(file_path);
+        CREATE INDEX IF NOT EXISTS idx_alerts_session ON alerts(session_id);
     """)
     conn.commit()
 
@@ -257,11 +287,6 @@ def current_burn_pct(conn: sqlite3.Connection, config: dict) -> float:
 
 
 def pace_delay(pct_burned: float, config: dict) -> float:
-    """Return seconds to wait before dispatching the next job.
-
-    Under threshold: 0 (front-load).
-    Above threshold: linear ramp to max_delay at 100%.
-    """
     threshold = config.get("pacing_threshold_pct", 60)
     max_delay = config.get("pacing_max_delay", 300)
     if pct_burned < threshold:
@@ -291,6 +316,7 @@ def cmd_record(args) -> int:
     if not usage:
         return 0
 
+    now = time.time()
     try:
         conn = open_db(db_path())
         conn.execute(
@@ -299,12 +325,54 @@ def cmd_record(args) -> int:
                 input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                session_id, prompt_id, cwd, usage.get("model"), time.time(),
+                session_id, prompt_id, cwd, usage.get("model"), now,
                 usage.get("input_tokens", 0), usage.get("output_tokens", 0),
                 usage.get("cache_read_tokens", 0), usage.get("cache_write_tokens", 0),
             ),
         )
         conn.commit()
+
+        existing = conn.execute(
+            "SELECT id FROM session_intents WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if not existing:
+            intent = _extract_first_user_intent(transcript_path)
+            if intent:
+                conn.execute(
+                    "INSERT OR IGNORE INTO session_intents (session_id, intent, cwd, ts) VALUES (?,?,?,?)",
+                    (session_id, intent, cwd, now),
+                )
+                conn.commit()
+
+        config = get_config()
+
+        spike_msg = _detect_spike(conn, session_id, usage, now, config)
+        if spike_msg:
+            conn.execute(
+                "INSERT INTO alerts (session_id, ts, kind, severity, message, details) VALUES (?,?,?,?,?,?)",
+                (session_id, now, "spike", "warn", spike_msg, json.dumps(usage)),
+            )
+            conn.commit()
+            print(f"[slipstream] ⚡ COST SPIKE: {spike_msg}", flush=True)
+
+        loop_msg = _detect_loop(conn, session_id)
+        if loop_msg:
+            conn.execute(
+                "INSERT INTO alerts (session_id, ts, kind, severity, message, details) VALUES (?,?,?,?,?,?)",
+                (session_id, now, "loop", "warn", loop_msg, None),
+            )
+            conn.commit()
+            print(f"[slipstream] 🔁 LOOP DETECTED: {loop_msg}", flush=True)
+
+        drift_msg = _detect_drift(conn, session_id, now)
+        if drift_msg:
+            conn.execute(
+                "INSERT INTO alerts (session_id, ts, kind, severity, message, details) VALUES (?,?,?,?,?,?)",
+                (session_id, now, "drift", "warn", drift_msg, None),
+            )
+            conn.commit()
+            print(f"[slipstream] 🧭 DRIFT: {drift_msg}", flush=True)
+
         conn.close()
     except Exception:
         pass
@@ -323,14 +391,45 @@ def cmd_record_tool(args) -> int:
     tool_input = payload.get("tool_input", {})
     file_paths = _extract_file_paths(tool_name, tool_input)
 
+    now = time.time()
     try:
         conn = open_db(db_path())
         conn.execute(
             "INSERT INTO tool_uses (session_id, prompt_id, tool_name, file_paths, ts) VALUES (?,?,?,?,?)",
             (session_id, prompt_id, tool_name,
-             json.dumps(file_paths) if file_paths else None, time.time()),
+             json.dumps(file_paths) if file_paths else None, now),
         )
         conn.commit()
+
+        for fp in file_paths:
+            if tool_name == "Read":
+                stale_msg = _check_stale_read(conn, session_id, fp, now)
+                if stale_msg:
+                    conn.execute(
+                        "INSERT INTO alerts (session_id, ts, kind, severity, message, details) VALUES (?,?,?,?,?,?)",
+                        (session_id, now, "stale", "warn", stale_msg, fp),
+                    )
+                    conn.commit()
+                    print(f"[slipstream] 📂 STALE READ: {stale_msg}", flush=True)
+
+            if tool_name in ("Write", "Edit", "MultiEdit"):
+                desc = f"{tool_name} → {_shorten_path(fp)}"
+                ctx = json.dumps(tool_input)[:400]
+                conn.execute(
+                    "INSERT INTO decision_log (session_id, ts, tool_name, file_path, description, prompt_ctx) VALUES (?,?,?,?,?,?)",
+                    (session_id, now, tool_name, fp, desc, ctx),
+                )
+                conn.commit()
+
+                scope_msg = _check_scope_creep(conn, session_id, fp)
+                if scope_msg:
+                    conn.execute(
+                        "INSERT INTO alerts (session_id, ts, kind, severity, message, details) VALUES (?,?,?,?,?,?)",
+                        (session_id, now, "scope_creep", "warn", scope_msg, fp),
+                    )
+                    conn.commit()
+                    print(f"[slipstream] 🔭 SCOPE CREEP: {scope_msg}", flush=True)
+
         conn.close()
     except Exception:
         pass
@@ -474,36 +573,191 @@ def cmd_report(args) -> int:
     return 0
 
 
+_SUBBLOCK = " ▏▎▍▌▋▊▉█"
+
+def _bar(pct: float, width: int = 8) -> str:
+    """Smooth Unicode progress bar using eighth-block characters."""
+    total_eighths = round(min(pct, 100) / 100 * width * 8)
+    full, remainder = divmod(total_eighths, 8)
+    bar = "█" * full
+    if remainder and full < width:
+        bar += _SUBBLOCK[remainder]
+        full += 1
+    bar += "·" * (width - full)
+    return bar
+
+
+def _ansi(text: str, code: str) -> str:
+    """Wrap text in ANSI colour code; strip if NO_COLOR or not a tty."""
+    if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
 def cmd_statusline(args) -> int:
     try:
         conn = open_db(db_path())
     except Exception:
-        print("?")
+        print("⚡ ? │ 🎯 ? │ 💾 ?")
         return 0
 
     config = get_config()
     window = config.get("window_tokens", 1_000_000)
+    warn_pct = config.get("warn_threshold_pct", 70)
+    crit_pct = config.get("critical_threshold_pct", 90)
     since = time.time() - 5 * 3600
+
+    session_id = os.environ.get("CLAUDE_SESSION_ID", "")
     row = conn.execute(
-        "SELECT SUM(input_tokens+output_tokens+cache_read_tokens+cache_write_tokens) as total, COUNT(*) as turns, MIN(ts) as first_ts FROM turns WHERE ts>=?",
+        """SELECT SUM(input_tokens+output_tokens+cache_read_tokens+cache_write_tokens) as total,
+                  SUM(cache_read_tokens) as cache_read,
+                  COUNT(*) as turns,
+                  MIN(ts) as first_ts
+           FROM turns WHERE ts>=?""",
         (since,),
     ).fetchone()
-    conn.close()
-
     total = row["total"] or 0
+    cache_read = row["cache_read"] or 0
     turns = row["turns"] or 0
-    pct = total / window * 100 if window > 0 else 0
+    burn_pct = total / window * 100 if window > 0 else 0
 
-    eta = ""
-    if turns > 1 and row["first_ts"]:
-        elapsed = time.time() - row["first_ts"]
-        rate = total / elapsed if elapsed > 0 else 0
-        remaining = (window - total) / rate if rate > 0 else None
-        if remaining and remaining > 0:
-            eta = f" ~{remaining/3600:.1f}h left"
+    if burn_pct >= crit_pct:
+        burn_color = "31"
+    elif burn_pct >= warn_pct:
+        burn_color = "33"
+    else:
+        burn_color = "32"
 
-    symbol = "▓" if pct >= 90 else ("▒" if pct >= 70 else "░")
-    print(f"{symbol} {pct:.0f}%{eta}")
+    burn_bar = _bar(burn_pct)
+    burn_str = _ansi(burn_bar, burn_color) + _ansi(f" {burn_pct:.0f}%", burn_color)
+
+    drift_pct = 0.0
+    if session_id:
+        intent_row = conn.execute(
+            "SELECT intent FROM session_intents WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if intent_row:
+            intent = intent_row["intent"]
+            keywords = {w.lower() for w in re.split(r'\W+', intent) if len(w) > 3}
+            files_in_intent = set(re.findall(r'[\w./]+\.(?:py|ts|js|go|rs|rb|java|c|cpp|h|md|yaml|yml|json|toml)', intent))
+            cutoff = time.time() - 1800
+            edits = conn.execute(
+                "SELECT file_paths FROM tool_uses WHERE session_id=? AND tool_name IN ('Write','Edit','MultiEdit') AND ts>=?",
+                (session_id, cutoff),
+            ).fetchall()
+            if len(edits) >= 3:
+                unrelated = 0
+                for e in edits:
+                    fp = (json.loads(e["file_paths"]) if e["file_paths"] else [])
+                    fp_str = " ".join(fp).lower()
+                    if not any(k in fp_str for k in keywords) and not any(f in fp_str for f in files_in_intent):
+                        unrelated += 1
+                drift_pct = unrelated / len(edits) * 100
+
+    if drift_pct >= 60:
+        drift_color = "31"
+    elif drift_pct >= 40:
+        drift_color = "33"
+    else:
+        drift_color = "32"
+
+    drift_bar = _bar(drift_pct)
+    drift_str = _ansi(drift_bar, drift_color) + _ansi(f" {drift_pct:.0f}%", drift_color)
+
+    saved = int(cache_read * 0.90)
+    if saved >= 1_000_000:
+        saved_str = f"{saved/1_000_000:.1f}M"
+    elif saved >= 1_000:
+        saved_str = f"{saved/1_000:.1f}k"
+    else:
+        saved_str = str(saved)
+
+    sep = _ansi(" · ", "2")
+    print(f"⚡ {burn_str}{sep}🎯 {drift_str}{sep}↓ {_ansi(saved_str, '36')}")
+    conn.close()
+    return 0
+
+
+def cmd_install_statusline(args) -> int:
+    """Wire `slipstream statusline` into Claude Code's statusLine setting."""
+    import sys as _sys
+    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Use absolute path to this script so it works regardless of PATH
+    this_script = str(Path(__file__).resolve())
+    cmd = f"{_sys.executable} {this_script} statusline"
+
+    if settings_path.exists():
+        try:
+            settings = json.loads(settings_path.read_text())
+        except Exception:
+            settings = {}
+    else:
+        settings = {}
+
+    existing = settings.get("statusLine", {}).get("command", "")
+    already = existing == cmd or existing == "slipstream statusline" or existing.endswith("slipstream statusline")
+    if already:
+        if existing != cmd:
+            settings["statusLine"] = {"command": cmd}
+            settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+            print("✓ Updated to absolute path — slipstream statusline is your Claude Code status bar.")
+        else:
+            print("✓ Already configured — slipstream statusline is your Claude Code status bar.")
+        return 0
+
+    if existing:
+        print(f"⚠ statusLine is already set to: {existing!r}")
+        print("  Edit ~/.claude/settings.json manually to replace it with:")
+        print(f'  "statusLine": {{"command": "{cmd}"}}')
+        return 1
+
+    settings["statusLine"] = {"command": cmd}
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    print("✓ Done. Your Claude Code status bar now shows:")
+    print("  ⚡ ████████·· 68% · 🎯 ██·····  14% · ↓ 84.2k")
+    print("  (burn / drift / saved tokens — updates every turn)")
+    print(f"\n  Wrote to: {settings_path}")
+    return 0
+
+
+def cmd_install_skills(args) -> int:
+    """Symlink slipstream skills into ~/.claude/skills/ so they appear in the / menu."""
+    skills_src = Path(__file__).resolve().parent.parent / "skills"
+    skills_dst = Path.home() / ".claude" / "skills"
+    skills_dst.mkdir(parents=True, exist_ok=True)
+
+    if not skills_src.exists():
+        print(f"✗ Skills directory not found: {skills_src}")
+        return 1
+
+    installed = []
+    skipped = []
+    for skill_dir in sorted(skills_src.iterdir()):
+        if not skill_dir.is_dir() or not (skill_dir / "SKILL.md").exists():
+            continue
+        name = skill_dir.name
+        link = skills_dst / name
+        if link.is_symlink() and link.resolve() == skill_dir.resolve():
+            skipped.append(name)
+            continue
+        if link.exists() or link.is_symlink():
+            skipped.append(f"{name} (conflict — remove {link} manually)")
+            continue
+        link.symlink_to(skill_dir)
+        installed.append(name)
+
+    if installed:
+        print(f"✓ Installed skills: {', '.join(installed)}")
+        print("  They will appear when you type / in Claude Code (restart may be needed).")
+    if skipped:
+        for s in skipped:
+            if "conflict" in s:
+                print(f"⚠ Skipped {s}")
+            # already linked ones are silent
+    if not installed and not any("conflict" in s for s in skipped):
+        print("✓ All skills already installed.")
     return 0
 
 
@@ -551,7 +805,6 @@ def cmd_monitor(args) -> int:
 # ---------------------------------------------------------------------------
 
 def _haiku_rewrite(prompt: str) -> tuple[str, list]:
-    """Call Haiku to rewrite a prompt. Returns (rewritten, [change_notes])."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         return prompt, []
@@ -598,7 +851,6 @@ def _haiku_rewrite(prompt: str) -> tuple[str, list]:
 
 
 def cmd_add(args) -> int:
-    """Enqueue a job. Calls Haiku pre-flight if ANTHROPIC_API_KEY is set."""
     prompt = args.prompt
     cwd = getattr(args, "cwd", None) or os.getcwd()
     files = getattr(args, "files", None) or []
@@ -640,7 +892,6 @@ def cmd_add(args) -> int:
 
 
 def cmd_approve(args) -> int:
-    """Batch-approve or reject pending prompt rewrites."""
     conn = open_db(db_path())
     pending = conn.execute(
         "SELECT * FROM jobs WHERE status='pending_review' ORDER BY created_at"
@@ -717,7 +968,6 @@ def cmd_queue_list(args) -> int:
 
 
 def cmd_dispatch(args) -> int:
-    """Dispatcher loop: runs approved jobs via 'claude -p', respecting pacing."""
     config = get_config()
     output_dir = data_dir() / "outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -805,7 +1055,6 @@ def cmd_dispatch(args) -> int:
 
 
 def cmd_service(args) -> int:
-    """Install/uninstall/status the dispatcher as an OS service."""
     action = args.action
     engine = str(Path(__file__).resolve())
     dispatch_cmd = f"{engine} dispatch"
@@ -920,7 +1169,6 @@ def cmd_service(args) -> int:
 # ---------------------------------------------------------------------------
 
 def _extract_decisions(text: str) -> str:
-    """Heuristically extract decision statements from transcript text."""
     patterns = [
         r"(?i)(decided|will use|using|schema:|api:|we('ll| will)|going with|approach:)[^\n]{10,120}",
         r"(?i)(don't|do not|never|always|must)[^\n]{10,80}",
@@ -947,7 +1195,6 @@ def _file_hash(path: str) -> str:
 
 
 def cmd_anchor_snapshot(args) -> int:
-    """PreCompact hook: write snapshot and print compact summary to stdout."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -1011,7 +1258,6 @@ def cmd_anchor_snapshot(args) -> int:
 
 
 def cmd_anchor_inject(args) -> int:
-    """PostCompact hook: re-inject the latest snapshot into the new context."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -1035,7 +1281,6 @@ def cmd_anchor_inject(args) -> int:
 
 
 def cmd_anchor(args) -> int:
-    """Inspect anchor snapshots for the current/specified session."""
     session_id = getattr(args, "session_id", None)
     conn = open_db(db_path())
 
@@ -1106,7 +1351,6 @@ def _matches_command(pattern: str, command: str) -> bool:
 
 
 def cmd_guard_check(args) -> int:
-    """PreToolUse hook: enforce rule guard on matching commands. Exit 2 to block."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -1186,7 +1430,6 @@ def cmd_guard_check(args) -> int:
 
 
 def cmd_guard_init(args) -> int:
-    """Read CLAUDE.md and propose a rules.yaml from it."""
     project_dir = args.project_dir or os.getcwd()
     claude_md = Path(project_dir) / "CLAUDE.md"
     rules_dir = Path(project_dir) / ".slipstream"
@@ -1233,7 +1476,7 @@ def cmd_guard_init(args) -> int:
 
           - name: no_secrets
             on: "git commit"
-            check: "! git diff --cached | grep -iE '^\\\\+.*(password|secret|api_key)\\\\s*=\\\\s*[\\"\\x27][^\\"\\x27]'"
+            check: "! git diff --cached | grep -iE '^\\\\+.*(password|secret|api_key)\\\\s*=\\\\s*[\\"\\x27][^\\"\'\\x27]'"
             message: "Possible secret in staged changes — verify before committing"
             enabled: "false"
 
@@ -1253,12 +1496,11 @@ def cmd_guard_init(args) -> int:
 # Module 5 — Token coach, decision accelerator, warm-up
 # ---------------------------------------------------------------------------
 
-_AVG_TOKENS_PER_READ = 520  # typical file read in tokens (heuristic)
-_CACHE_READ_COST_RATIO = 0.10  # cache read costs ~10% of fresh read
+_AVG_TOKENS_PER_READ = 520
+_CACHE_READ_COST_RATIO = 0.10
 
 
 def _coach_analysis(conn: sqlite3.Connection, config: dict, days: int = 7) -> dict:
-    """Return ROI-ranked token-saving recommendations."""
     since = time.time() - days * 86400
     window = config.get("window_tokens", 1_000_000)
 
@@ -1313,7 +1555,6 @@ def _coach_analysis(conn: sqlite3.Connection, config: dict, days: int = 7) -> di
 
 
 def cmd_coach(args) -> int:
-    """Analyze token waste and print ROI-ranked recommendations."""
     try:
         conn = open_db(db_path())
     except Exception as e:
@@ -1339,7 +1580,7 @@ def cmd_coach(args) -> int:
     print(f"  Total spend    : {total:>12,} tokens")
     print(f"  Recoverable    : {waste:>12,} tokens  ({pct_save:.0f}% savings potential)")
     print()
-    print("  ── TOP TOKEN SINKS (re-read waste) ──────────────────────────")
+    print("  ── TOP TOKEN SINKS (re-read waste) ────────────────────────────")
     print()
 
     recs = analysis["recommendations"]
@@ -1360,7 +1601,6 @@ def cmd_coach(args) -> int:
 
 
 def cmd_optimize(args) -> int:
-    """Generate CLAUDE.md additions that pin hot files for cache efficiency."""
     try:
         conn = open_db(db_path())
     except Exception as e:
@@ -1417,7 +1657,6 @@ def cmd_optimize(args) -> int:
 
 
 def _haiku_decide(prompt: str, context: str) -> dict:
-    """Ask Haiku for a structured decision brief on a pending job."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         return {}
@@ -1465,7 +1704,6 @@ def _haiku_decide(prompt: str, context: str) -> dict:
 
 
 def cmd_decide(args) -> int:
-    """Surface Haiku-powered decision briefs for pending jobs."""
     try:
         conn = open_db(db_path())
     except Exception as e:
@@ -1516,7 +1754,6 @@ def cmd_decide(args) -> int:
 
 
 def cmd_warmup(args) -> int:
-    """SessionStart hook: print a warm-up context block for the new session."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -1534,6 +1771,14 @@ def cmd_warmup(args) -> int:
 
         pending = conn.execute(
             "SELECT id, prompt, status, priority FROM jobs WHERE status IN ('pending_review','approved') ORDER BY priority DESC, created_at LIMIT 5"
+        ).fetchall()
+
+        conn.close()
+
+        recent_alerts = conn.execute(
+            """SELECT kind, severity, message FROM alerts
+               WHERE ts >= ? ORDER BY ts DESC LIMIT 5""",
+            (time.time() - 86400,),
         ).fetchall()
 
         conn.close()
@@ -1557,11 +1802,492 @@ def cmd_warmup(args) -> int:
                 f"\n⚡ Token coach: {analysis['potential_saving_pct']:.0f}% savings available — run `slipstream coach` to see how."
             )
 
+        if recent_alerts:
+            sym = {"spike": "⚡", "drift": "🧭", "loop": "🔁", "stale": "📂", "scope_creep": "🔭"}
+            lines.append(f"\nRecent alerts (last 24h):")
+            for a in recent_alerts:
+                icon = sym.get(a["kind"], "•")
+                lines.append(f"  {icon} [{a['kind']}] {a['message'][:80]}")
+            lines.append("  Run `slipstream alerts` for full list.")
+
         lines.append("=== END WARM-UP ===")
         print("\n".join(lines))
 
     except Exception:
         pass
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Module 6 — Intelligence layer helpers
+# ---------------------------------------------------------------------------
+
+def _extract_first_user_intent(transcript_path: str) -> str:
+    p = Path(transcript_path)
+    if not p.exists():
+        return ""
+    try:
+        with open(p) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                role = obj.get("role") or obj.get("type", "")
+                if role != "user":
+                    continue
+                content = obj.get("content") or ""
+                if isinstance(content, list):
+                    parts = [c.get("text", "") for c in content if isinstance(c, dict)]
+                    content = " ".join(parts)
+                content = str(content).strip()
+                if len(content) >= 20:
+                    return content[:500]
+    except Exception:
+        pass
+    return ""
+
+
+def _score_prompt(intent: str) -> dict:
+    if not intent:
+        return {"score": 0, "suggestions": []}
+    suggestions = []
+    score = 100
+
+    has_file = bool(re.search(r'[\w/]+\.\w{1,6}', intent))
+    if not has_file and len(intent) > 30:
+        suggestions.append("Pin specific files (e.g. src/auth/session.py) to narrow scope")
+        score -= 20
+
+    has_criteria = bool(re.search(
+        r'(?i)(should|must|expect|test|verify|confirm|until|when done|acceptance|criteria)', intent
+    ))
+    if not has_criteria:
+        suggestions.append("Add acceptance criteria — what does 'done' look like?")
+        score -= 25
+
+    vague = re.findall(r'(?i)\b(the thing|it|the issue|that|this|the problem|the bug)\b', intent)
+    if len(vague) >= 2:
+        suggestions.append(f"Replace vague references ({', '.join(set(vague[:3]))}) with specifics")
+        score -= 20
+
+    has_scope = bool(re.search(
+        r'(?i)(only|just|limit|don\'t touch|keep|leave|focus on|specifically)', intent
+    ))
+    if not has_scope and len(intent) < 100:
+        suggestions.append("Define scope — what should NOT be changed?")
+        score -= 15
+
+    return {"score": max(score, 0), "suggestions": suggestions[:3]}
+
+
+def _detect_spike(conn: sqlite3.Connection, session_id: str, usage: dict,
+                  now: float, config: dict) -> str:
+    this_turn = (usage.get("input_tokens", 0) + usage.get("output_tokens", 0) +
+                 usage.get("cache_read_tokens", 0) + usage.get("cache_write_tokens", 0))
+    if this_turn < 5000:
+        return ""
+
+    rows = conn.execute(
+        """SELECT AVG(input_tokens+output_tokens+cache_read_tokens+cache_write_tokens) as avg,
+                  COUNT(*) as n
+           FROM turns WHERE session_id=? AND ts < ?""",
+        (session_id, now),
+    ).fetchone()
+    avg = rows["avg"] or 0
+    n = rows["n"] or 0
+    if n < 3 or avg < 1000:
+        return ""
+
+    ratio = this_turn / avg
+    if ratio >= 3.0:
+        return f"Turn used {this_turn:,} tokens ({ratio:.1f}× session avg of {avg:,.0f})"
+    return ""
+
+
+def _detect_loop(conn: sqlite3.Connection, session_id: str) -> str:
+    rows = conn.execute(
+        """SELECT tool_name, file_paths FROM tool_uses
+           WHERE session_id=? ORDER BY ts DESC LIMIT 15""",
+        (session_id,),
+    ).fetchall()
+    if len(rows) < 6:
+        return ""
+
+    sigs = []
+    for r in rows:
+        sigs.append(f"{r['tool_name']}:{r['file_paths'] or ''}")
+
+    for i in range(len(sigs) - 2):
+        if sigs[i] == sigs[i+1] == sigs[i+2]:
+            tool = rows[i]["tool_name"]
+            fp = rows[i]["file_paths"]
+            label = _shorten_path((json.loads(fp) or ["?"])[0] if fp else "?")
+            return f"{tool} on {label} repeated 3+ times — possible stuck loop"
+    return ""
+
+
+def _detect_drift(conn: sqlite3.Connection, session_id: str, now: float) -> str:
+    intent_row = conn.execute(
+        "SELECT intent FROM session_intents WHERE session_id=?", (session_id,)
+    ).fetchone()
+    if not intent_row:
+        return ""
+
+    intent = intent_row["intent"].lower()
+    intent_files = set(re.findall(r'[\w/-]+\.\w{2,6}', intent))
+    intent_dirs = set(re.findall(r'[\w/-]+/', intent))
+    intent_words = set(w for w in re.findall(r'\b\w{4,}\b', intent)
+                       if w not in ("will", "that", "this", "with", "from", "have", "been"))
+
+    if not intent_files and not intent_dirs and len(intent_words) < 3:
+        return ""
+
+    rows = conn.execute(
+        """SELECT file_paths FROM tool_uses
+           WHERE session_id=? AND tool_name IN ('Write','Edit','MultiEdit')
+             AND ts > ? ORDER BY ts DESC LIMIT 20""",
+        (session_id, now - 1800),
+    ).fetchall()
+    if len(rows) < 5:
+        return ""
+
+    unrelated = 0
+    total = 0
+    for r in rows:
+        if not r["file_paths"]:
+            continue
+        try:
+            fps = json.loads(r["file_paths"])
+        except Exception:
+            fps = [r["file_paths"]]
+        for fp in fps:
+            total += 1
+            fp_lower = fp.lower()
+            related = (
+                any(f in fp_lower for f in intent_files) or
+                any(d in fp_lower for d in intent_dirs) or
+                any(w in fp_lower for w in intent_words)
+            )
+            if not related:
+                unrelated += 1
+
+    if total >= 5 and unrelated / total >= 0.6:
+        return (f"{unrelated}/{total} recent edits touch files not mentioned in original intent — "
+                "consider `slipstream handoff` if scope changed")
+    return ""
+
+
+def _check_stale_read(conn: sqlite3.Connection, session_id: str, fp: str, now: float) -> str:
+    prev = conn.execute(
+        """SELECT MAX(ts) as last_ts FROM tool_uses
+           WHERE session_id=? AND file_paths LIKE ? AND tool_name='Read'""",
+        (session_id, f'%{fp}%'),
+    ).fetchone()
+    if not prev or not prev["last_ts"]:
+        return ""
+    last_ts = prev["last_ts"]
+
+    try:
+        mtime = Path(fp).stat().st_mtime
+    except Exception:
+        return ""
+
+    if mtime > last_ts + 2:
+        age = int((now - last_ts) / 60)
+        return (f"{_shorten_path(fp)} was read {age}m ago but changed on disk since — "
+                "re-read recommended")
+    return ""
+
+
+def _check_scope_creep(conn: sqlite3.Connection, session_id: str, fp: str) -> str:
+    intent_row = conn.execute(
+        "SELECT intent FROM session_intents WHERE session_id=?", (session_id,)
+    ).fetchone()
+    if not intent_row:
+        return ""
+
+    intent = intent_row["intent"].lower()
+    intent_files = set(re.findall(r'[\w/-]+\.\w{2,6}', intent))
+    intent_dirs = set(re.findall(r'[\w/-]+/', intent))
+    intent_words = set(w for w in re.findall(r'\b\w{4,}\b', intent)
+                       if w not in ("will", "that", "this", "with", "from", "have", "been"))
+
+    if not intent_files and not intent_dirs and len(intent_words) < 3:
+        return ""
+
+    fp_lower = fp.lower()
+    related = (
+        any(f in fp_lower for f in intent_files) or
+        any(d in fp_lower for d in intent_dirs) or
+        any(w in fp_lower for w in intent_words)
+    )
+
+    if not related:
+        edit_count = conn.execute(
+            "SELECT COUNT(*) FROM decision_log WHERE session_id=?", (session_id,)
+        ).fetchone()[0]
+        if edit_count >= 3:
+            return (f"{_shorten_path(fp)} not in original scope — "
+                    "run `slipstream drift` if this is intentional")
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Module 6 commands
+# ---------------------------------------------------------------------------
+
+def cmd_handoff(args) -> int:
+    try:
+        conn = open_db(db_path())
+    except Exception as e:
+        print(f"slipstream: cannot open DB: {e}", file=sys.stderr)
+        return 1
+
+    session_id = getattr(args, "session_id", None)
+    if not session_id:
+        row = conn.execute(
+            "SELECT session_id FROM turns ORDER BY ts DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            session_id = row["session_id"]
+
+    if not session_id:
+        print("[slipstream handoff] No sessions found.")
+        conn.close()
+        return 0
+
+    intent_row = conn.execute(
+        "SELECT intent, cwd, ts FROM session_intents WHERE session_id=?", (session_id,)
+    ).fetchone()
+
+    turns = conn.execute(
+        "SELECT COUNT(*) as n, SUM(input_tokens+output_tokens) as tok, MIN(ts) as start, MAX(ts) as end FROM turns WHERE session_id=?",
+        (session_id,),
+    ).fetchone()
+
+    decisions = conn.execute(
+        "SELECT tool_name, file_path, description, ts FROM decision_log WHERE session_id=? ORDER BY ts",
+        (session_id,),
+    ).fetchall()
+
+    snap = conn.execute(
+        "SELECT decisions, files_read FROM snapshots WHERE session_id=? ORDER BY ts DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()
+
+    alerts_rows = conn.execute(
+        "SELECT kind, message FROM alerts WHERE session_id=? ORDER BY ts",
+        (session_id,),
+    ).fetchall()
+
+    pending = conn.execute(
+        "SELECT id, prompt, status FROM jobs WHERE status IN ('pending_review','approved') ORDER BY created_at LIMIT 10"
+    ).fetchall()
+
+    conn.close()
+
+    started = ""
+    if turns and turns["start"]:
+        started = datetime.fromtimestamp(turns["start"], tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    lines = [
+        f"# Session Handoff",
+        f"",
+        f"**Session**: `{session_id[:24]}`  ",
+        f"**Started**: {started}  ",
+        f"**Project**: {_shorten_path((intent_row['cwd'] if intent_row else '') or os.getcwd())}  ",
+        f"**Turns**: {turns['n'] or 0}  **Tokens**: {turns['tok'] or 0:,}",
+        f"",
+        f"## Original Intent",
+        f"",
+        intent_row["intent"] if intent_row else "_Not captured_",
+        f"",
+        f"## Files Changed",
+        f"",
+    ]
+
+    if decisions:
+        seen = {}
+        for d in decisions:
+            fp = d["file_path"] or ""
+            if fp not in seen:
+                seen[fp] = d["tool_name"]
+        for fp, tool in seen.items():
+            lines.append(f"- `{fp}` ({tool})")
+    else:
+        lines.append("_No edits recorded_")
+
+    lines += [
+        f"",
+        f"## Key Decisions",
+        f"",
+    ]
+    if snap and snap["decisions"]:
+        for d in snap["decisions"].split("\n")[:10]:
+            if d.strip():
+                lines.append(f"- {d.strip()}")
+    else:
+        lines.append("_No anchor snapshot found_")
+
+    if alerts_rows:
+        lines += ["", "## Alerts Fired", ""]
+        for a in alerts_rows:
+            lines.append(f"- **{a['kind']}**: {a['message']}")
+
+    if pending:
+        lines += ["", "## Pending Queue", ""]
+        for j in pending:
+            lines.append(f"- #{j['id']} `[{j['status']}]` {(j['prompt'] or '')[:80]}")
+
+    lines += ["", "## Next Steps", "", "_Fill in before handing off._", ""]
+
+    doc = "\n".join(lines)
+
+    output = getattr(args, "output", None)
+    if output:
+        Path(output).write_text(doc)
+        print(f"[slipstream handoff] Written to {output}")
+    else:
+        print(doc)
+    return 0
+
+
+def cmd_why(args) -> int:
+    target = getattr(args, "file", None)
+    session_id = getattr(args, "session_id", None)
+    try:
+        conn = open_db(db_path())
+    except Exception as e:
+        print(f"slipstream: cannot open DB: {e}", file=sys.stderr)
+        return 1
+
+    q = "SELECT * FROM decision_log WHERE 1=1"
+    params: list = []
+    if target:
+        q += " AND file_path LIKE ?"
+        params.append(f"%{target}%")
+    if session_id:
+        q += " AND session_id=?"
+        params.append(session_id)
+    q += " ORDER BY ts DESC LIMIT 30"
+
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+
+    if not rows:
+        print(f"[slipstream why] No decisions found{' for ' + target if target else ''}.")
+        return 0
+
+    print(f"\n  Decision log{' for ' + target if target else ''}\n")
+    for r in rows:
+        ts = datetime.fromtimestamp(r["ts"], tz=timezone.utc).strftime("%m-%d %H:%M")
+        print(f"  {ts}  {r['tool_name']:<10}  {_shorten_path(r['file_path'] or '')}")
+        if r["prompt_ctx"]:
+            ctx = r["prompt_ctx"][:120].replace("\n", " ")
+            print(f"           ctx: {ctx}")
+        print()
+    return 0
+
+
+def cmd_alerts(args) -> int:
+    try:
+        conn = open_db(db_path())
+    except Exception as e:
+        print(f"slipstream: cannot open DB: {e}", file=sys.stderr)
+        return 1
+
+    days = getattr(args, "days", 7)
+    kind_filter = getattr(args, "kind", None)
+    since = time.time() - days * 86400
+
+    q = "SELECT * FROM alerts WHERE ts>=?"
+    params: list = [since]
+    if kind_filter:
+        q += " AND kind=?"
+        params.append(kind_filter)
+    q += " ORDER BY ts DESC LIMIT 50"
+
+    rows = conn.execute(q, params).fetchall()
+    conn.close()
+
+    if not rows:
+        print(f"[slipstream alerts] No alerts in last {days}d.")
+        return 0
+
+    sym = {"spike": "⚡", "drift": "🧭", "loop": "🔁", "stale": "📂", "scope_creep": "🔭"}
+    bar = "─" * 62
+    print(f"\n{'Slipstream Alerts':^62}")
+    print(f"{'last ' + str(days) + ' days':^62}")
+    print(bar)
+    for r in rows:
+        ts = datetime.fromtimestamp(r["ts"], tz=timezone.utc).strftime("%m-%d %H:%M")
+        icon = sym.get(r["kind"], "•")
+        print(f"  {ts}  {icon} [{r['kind']:<12}]  {r['message'][:60]}")
+    print(bar)
+    print()
+    return 0
+
+
+def cmd_drift(args) -> int:
+    session_id = getattr(args, "session_id", None)
+    try:
+        conn = open_db(db_path())
+    except Exception as e:
+        print(f"slipstream: cannot open DB: {e}", file=sys.stderr)
+        return 1
+
+    if not session_id:
+        row = conn.execute(
+            "SELECT session_id FROM session_intents ORDER BY ts DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            session_id = row["session_id"]
+
+    if not session_id:
+        print("[slipstream drift] No sessions with recorded intent found.")
+        conn.close()
+        return 0
+
+    intent_row = conn.execute(
+        "SELECT intent, cwd, ts FROM session_intents WHERE session_id=?", (session_id,)
+    ).fetchone()
+
+    edits = conn.execute(
+        """SELECT file_path, MIN(ts) as first_ts FROM decision_log
+           WHERE session_id=? GROUP BY file_path ORDER BY first_ts""",
+        (session_id,),
+    ).fetchall()
+
+    alerts_rows = conn.execute(
+        "SELECT ts, kind, message FROM alerts WHERE session_id=? AND kind IN ('drift','scope_creep') ORDER BY ts",
+        (session_id,),
+    ).fetchall()
+
+    conn.close()
+
+    print(f"\n  Drift analysis — session {session_id[:20]}...\n")
+    if intent_row:
+        print(f"  Intent: {intent_row['intent'][:120]}")
+    print()
+
+    if edits:
+        print(f"  Files edited ({len(edits)}):")
+        for e in edits:
+            ts = datetime.fromtimestamp(e["first_ts"], tz=timezone.utc).strftime("%H:%M")
+            print(f"    {ts}  {_shorten_path(e['file_path'] or '')}")
+    else:
+        print("  No edits recorded.")
+
+    if alerts_rows:
+        print(f"\n  Drift / scope alerts:")
+        for a in alerts_rows:
+            ts = datetime.fromtimestamp(a["ts"], tz=timezone.utc).strftime("%H:%M")
+            print(f"    {ts}  {a['message'][:80]}")
+    print()
     return 0
 
 
@@ -1581,8 +2307,10 @@ def cmd_doctor(args) -> int:
         tools = conn.execute("SELECT COUNT(*) FROM tool_uses").fetchone()[0]
         jobs = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
         snaps = conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0]
+        decs = conn.execute("SELECT COUNT(*) FROM decision_log").fetchone()[0]
+        alts = conn.execute("SELECT COUNT(*) FROM alerts").fetchone()[0]
         conn.close()
-        print(f"  DB: OK  ({turns} turns, {tools} tool uses, {jobs} jobs, {snaps} snapshots)")
+        print(f"  DB: OK  ({turns} turns, {tools} tool uses, {jobs} jobs, {snaps} snapshots, {decs} decisions, {alts} alerts)")
     except Exception as e:
         print(f"  DB: ERROR — {e}")
         ok = False
@@ -1647,7 +2375,6 @@ def main():
                                      description="Session economics engine for Claude Code.")
     sub = parser.add_subparsers(dest="command")
 
-    # Module 1
     sub.add_parser("record")
     sub.add_parser("record-tool")
     p_rep = sub.add_parser("report")
@@ -1658,7 +2385,6 @@ def main():
     p_mon = sub.add_parser("monitor")
     p_mon.add_argument("--session-id", dest="session_id")
 
-    # Module 2
     p_add = sub.add_parser("add")
     p_add.add_argument("prompt")
     p_add.add_argument("--cwd")
@@ -1676,13 +2402,11 @@ def main():
     p_svc = sub.add_parser("service")
     p_svc.add_argument("action", choices=["install", "uninstall", "status"])
 
-    # Module 3
     sub.add_parser("anchor-snapshot")
     sub.add_parser("anchor-inject")
     p_anc = sub.add_parser("anchor")
     p_anc.add_argument("--session-id", dest="session_id")
 
-    # Module 4
     sub.add_parser("guard-check")
     p_guard = sub.add_parser("guard")
     p_guard_sub = p_guard.add_subparsers(dest="guard_action")
@@ -1690,7 +2414,6 @@ def main():
     p_gi.add_argument("--project-dir", dest="project_dir", default=None)
     p_gi.add_argument("--force", action="store_true")
 
-    # Module 5 — coach / optimize / decide / warmup
     p_coach = sub.add_parser("coach")
     p_coach.add_argument("--days", type=int, default=7)
     p_coach.add_argument("--json", action="store_true")
@@ -1705,7 +2428,25 @@ def main():
     sub.add_parser("decide")
     sub.add_parser("warmup")
 
+    p_handoff = sub.add_parser("handoff")
+    p_handoff.add_argument("--session-id", dest="session_id")
+    p_handoff.add_argument("--output", default=None)
+
+    p_why = sub.add_parser("why")
+    p_why.add_argument("file", nargs="?scat", default=None)
+    p_why.add_argument("--session-id", dest="session_id")
+
+    p_alts = sub.add_parser("alerts")
+    p_alts.add_argument("--days", type=int, default=7)
+    p_alts.add_argument("--kind", default=None,
+                        choices=["spike", "drift", "loop", "stale", "scope_creep"])
+
+    p_drift = sub.add_parser("drift")
+    p_drift.add_argument("--session-id", dest="session_id")
+
     sub.add_parser("doctor")
+    sub.add_parser("install-statusline")
+    sub.add_parser("install-skills")
 
     args = parser.parse_args()
 
@@ -1729,7 +2470,13 @@ def main():
         "optimize": cmd_optimize,
         "decide": cmd_decide,
         "warmup": cmd_warmup,
+        "handoff": cmd_handoff,
+        "why": cmd_why,
+        "alerts": cmd_alerts,
+        "drift": cmd_drift,
         "doctor": cmd_doctor,
+        "install-statusline": cmd_install_statusline,
+        "install-skills": cmd_install_skills,
     }
 
     handler = dispatch.get(args.command)

@@ -225,3 +225,163 @@ class TestPacingGovernor:
 
     def test_zero_max_delay(self):
         assert ss.pace_delay(100.0, self.cfg(max_delay=0)) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Coach analysis
+# ---------------------------------------------------------------------------
+
+class TestCoachAnalysis:
+    def setup_method(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db_file = Path(self._tmp.name) / "test.db"
+
+    def teardown_method(self):
+        self._tmp.cleanup()
+
+    def open(self):
+        return ss.open_db(self.db_file)
+
+    def test_no_data_returns_zero_waste(self):
+        conn = self.open()
+        config = {"window_tokens": 1_000_000, "pacing_threshold_pct": 60, "pacing_max_delay": 300}
+        result = ss._coach_analysis(conn, config, days=7)
+        assert result["total_tokens"] == 0
+        assert result["total_waste_tokens"] == 0
+        assert result["potential_saving_pct"] == 0.0
+        assert result["recommendations"] == []
+        conn.close()
+
+    def test_single_read_no_waste(self):
+        conn = self.open()
+        conn.execute(
+            "INSERT INTO turns (session_id, ts, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens) VALUES (?,?,?,?,?,?)",
+            ("s1", time.time(), 500, 100, 0, 0),
+        )
+        conn.execute(
+            "INSERT INTO tool_uses (session_id, tool_name, file_paths, ts) VALUES (?,?,?,?)",
+            ("s1", "Read", json.dumps(["/a.py"]), time.time()),
+        )
+        conn.commit()
+        config = {"window_tokens": 1_000_000}
+        result = ss._coach_analysis(conn, config, days=7)
+        # only 1 read of /a.py — no waste
+        assert result["recommendations"] == []
+        conn.close()
+
+    def test_repeated_reads_generate_recommendation(self):
+        conn = self.open()
+        now = time.time()
+        conn.execute(
+            "INSERT INTO turns (session_id, ts, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens) VALUES (?,?,?,?,?,?)",
+            ("s1", now, 10000, 0, 0, 0),
+        )
+        for _ in range(5):
+            conn.execute(
+                "INSERT INTO tool_uses (session_id, tool_name, file_paths, ts) VALUES (?,?,?,?)",
+                ("s1", "Read", json.dumps(["/hot.py"]), now),
+            )
+        conn.commit()
+        config = {"window_tokens": 1_000_000}
+        result = ss._coach_analysis(conn, config, days=7)
+        assert len(result["recommendations"]) == 1
+        rec = result["recommendations"][0]
+        assert rec["path"] == "/hot.py"
+        assert rec["reads"] == 5
+        assert rec["wasted_reads"] == 4
+        assert rec["tokens_wasted"] > 0
+        conn.close()
+
+    def test_recommendations_sorted_by_reads_desc(self):
+        conn = self.open()
+        now = time.time()
+        conn.execute(
+            "INSERT INTO turns (session_id, ts, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens) VALUES (?,?,?,?,?,?)",
+            ("s1", now, 50000, 0, 0, 0),
+        )
+        for _ in range(3):
+            conn.execute(
+                "INSERT INTO tool_uses (session_id, tool_name, file_paths, ts) VALUES (?,?,?,?)",
+                ("s1", "Read", json.dumps(["/low.py"]), now),
+            )
+        for _ in range(8):
+            conn.execute(
+                "INSERT INTO tool_uses (session_id, tool_name, file_paths, ts) VALUES (?,?,?,?)",
+                ("s1", "Read", json.dumps(["/high.py"]), now),
+            )
+        conn.commit()
+        config = {"window_tokens": 1_000_000}
+        result = ss._coach_analysis(conn, config, days=7)
+        paths = [r["path"] for r in result["recommendations"]]
+        assert paths[0] == "/high.py"
+        assert paths[1] == "/low.py"
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Decision extraction
+# ---------------------------------------------------------------------------
+
+class TestExtractDecisions:
+    def test_decided_keyword(self):
+        text = "We decided to use PostgreSQL for the main database."
+        result = ss._extract_decisions(text)
+        assert "decided" in result.lower()
+
+    def test_never_keyword(self):
+        text = "Never commit secrets to the repository."
+        result = ss._extract_decisions(text)
+        assert "never" in result.lower()
+
+    def test_empty_text(self):
+        result = ss._extract_decisions("")
+        assert result == ""
+
+    def test_caps_at_15(self):
+        lines = [f"decided to do thing number {i} which is very important" for i in range(20)]
+        text = "\n".join(lines)
+        result = ss._extract_decisions(text)
+        assert len(result.splitlines()) <= 15
+
+
+# ---------------------------------------------------------------------------
+# Rule guard helpers
+# ---------------------------------------------------------------------------
+
+class TestLoadRules:
+    def test_no_rules_file_returns_empty(self, tmp_path):
+        rules = ss._load_rules(str(tmp_path))
+        assert rules == []
+
+    def test_parses_basic_rule(self, tmp_path):
+        rules_dir = tmp_path / ".slipstream"
+        rules_dir.mkdir()
+        (rules_dir / "rules.yaml").write_text(
+            "rules:\n"
+            "  - name: block_force_push\n"
+            "    on: \"push --force\"\n"
+            "    check: \"echo blocked\"\n"
+            "    message: \"No force push\"\n"
+            "    enabled: \"true\"\n"
+        )
+        rules = ss._load_rules(str(tmp_path))
+        assert len(rules) == 1
+        assert rules[0]["name"] == "block_force_push"
+
+    def test_disabled_rule_excluded(self, tmp_path):
+        rules_dir = tmp_path / ".slipstream"
+        rules_dir.mkdir()
+        (rules_dir / "rules.yaml").write_text(
+            "rules:\n"
+            "  - name: disabled_rule\n"
+            "    on: \"git commit\"\n"
+            "    check: \"echo ok\"\n"
+            "    enabled: \"false\"\n"
+        )
+        rules = ss._load_rules(str(tmp_path))
+        assert rules == []
+
+    def test_matches_command_substring(self):
+        assert ss._matches_command("push --force", "git push --force origin main") is True
+        assert ss._matches_command("push --force", "git push origin main") is False
+        assert ss._matches_command("PUSH --FORCE", "git push --force origin main") is True

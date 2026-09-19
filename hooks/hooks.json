@@ -1,0 +1,82 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": ["record"],
+            "timeout": 10,
+            "statusMessage": "slipstream: recording turn"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": ["record-tool"],
+            "timeout": 5,
+            "statusMessage": "slipstream: recording tool use"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": ["anchor", "snapshot"],
+            "timeout": 15,
+            "statusMessage": "slipstream: snapshotting anchor before compaction"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": ["anchor", "inject"],
+            "timeout": 15,
+            "statusMessage": "slipstream: re-injecting anchor after compaction"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": ["warmup"],
+            "timeout": 10,
+            "statusMessage": "slipstream: session warm-up"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": ["guard", "check"],
+            "timeout": 5,
+            "statusMessage": "slipstream: checking rule guard"
+          }
+        ]
+      }
+    ]
+  }
+}

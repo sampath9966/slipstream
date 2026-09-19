@@ -722,6 +722,45 @@ def cmd_install_statusline(args) -> int:
     return 0
 
 
+def cmd_install_skills(args) -> int:
+    """Symlink slipstream skills into ~/.claude/skills/ so they appear in the / menu."""
+    skills_src = Path(__file__).resolve().parent.parent / "skills"
+    skills_dst = Path.home() / ".claude" / "skills"
+    skills_dst.mkdir(parents=True, exist_ok=True)
+
+    if not skills_src.exists():
+        print(f"✗ Skills directory not found: {skills_src}")
+        return 1
+
+    installed = []
+    skipped = []
+    for skill_dir in sorted(skills_src.iterdir()):
+        if not skill_dir.is_dir() or not (skill_dir / "SKILL.md").exists():
+            continue
+        name = skill_dir.name
+        link = skills_dst / name
+        if link.is_symlink() and link.resolve() == skill_dir.resolve():
+            skipped.append(name)
+            continue
+        if link.exists() or link.is_symlink():
+            skipped.append(f"{name} (conflict — remove {link} manually)")
+            continue
+        link.symlink_to(skill_dir)
+        installed.append(name)
+
+    if installed:
+        print(f"✓ Installed skills: {', '.join(installed)}")
+        print("  They will appear when you type / in Claude Code (restart may be needed).")
+    if skipped:
+        for s in skipped:
+            if "conflict" in s:
+                print(f"⚠ Skipped {s}")
+            # already linked ones are silent
+    if not installed and not any("conflict" in s for s in skipped):
+        print("✓ All skills already installed.")
+    return 0
+
+
 def cmd_monitor(args) -> int:
     session_id = getattr(args, "session_id", None)
     config = get_config()
@@ -2394,7 +2433,7 @@ def main():
     p_handoff.add_argument("--output", default=None)
 
     p_why = sub.add_parser("why")
-    p_why.add_argument("file", nargs="?", default=None)
+    p_why.add_argument("file", nargs="?scat", default=None)
     p_why.add_argument("--session-id", dest="session_id")
 
     p_alts = sub.add_parser("alerts")
@@ -2407,6 +2446,7 @@ def main():
 
     sub.add_parser("doctor")
     sub.add_parser("install-statusline")
+    sub.add_parser("install-skills")
 
     args = parser.parse_args()
 
@@ -2436,6 +2476,7 @@ def main():
         "drift": cmd_drift,
         "doctor": cmd_doctor,
         "install-statusline": cmd_install_statusline,
+        "install-skills": cmd_install_skills,
     }
 
     handler = dispatch.get(args.command)

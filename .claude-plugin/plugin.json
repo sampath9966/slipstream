@@ -1,0 +1,51 @@
+{
+  "name": "slipstream",
+  "displayName": "Slipstream",
+  "description": "Session economics for Claude Code — burn ledger, window-aware queue, compaction anchor, rule guard.",
+  "version": "0.1.0",
+  "author": {
+    "name": "sampath9966",
+    "url": "https://github.com/sampath9966/splitstream"
+  },
+  "homepage": "https://github.com/sampath9966/splitstream",
+  "repository": "https://github.com/sampath9966/splitstream",
+  "license": "MIT",
+  "keywords": ["token-usage", "burn-ledger", "context-management", "productivity"],
+  "defaultEnabled": true,
+  "skills": "../skills/",
+  "hooks": "../hooks/hooks.json",
+  "experimental": {
+    "monitors": "../monitors/monitors.json"
+  },
+  "userConfig": {
+    "warn_threshold_pct": {
+      "type": "number",
+      "title": "Burn warning threshold (%)",
+      "description": "Emit an in-session warning when estimated window burn crosses this percentage.",
+      "default": 70
+    },
+    "critical_threshold_pct": {
+      "type": "number",
+      "title": "Critical burn threshold (%)",
+      "description": "Emit a critical warning at this percentage.",
+      "default": 90
+    },
+    "window_tokens": {
+      "type": "number",
+      "title": "Usage window size (tokens)",
+      "description": "Your rolling usage window token budget. Slipstream uses this to estimate % burn.",
+      "default": 1000000
+    },
+    "modules": {
+      "type": "object",
+      "title": "Module toggles",
+      "description": "Enable or disable individual modules.",
+      "default": {
+        "ledger": true,
+        "queue": false,
+        "anchor": false,
+        "guard": false
+      }
+    }
+  }
+}

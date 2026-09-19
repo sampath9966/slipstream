@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": ["record"],
+            "timeout": 10,
+            "statusMessage": "slipstream: recording turn"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": ["record-tool"],
+            "timeout": 5,
+            "statusMessage": "slipstream: recording tool use"
+          }
+        ]
+      }
+    ]
+  }
+}

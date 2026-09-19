@@ -1,0 +1,17 @@
+{
+  "name": "slipstream",
+  "owner": {
+    "name": "sampath9966",
+    "url": "https://github.com/sampath9966"
+  },
+  "description": "Session economics for Claude Code — burn ledger, window-aware queue, compaction anchor, rule guard. No telemetry; everything stays on your machine.",
+  "version": "1.0",
+  "plugins": [
+    {
+      "name": "slipstream",
+      "source": ".",
+      "description": "Full slipstream plugin",
+      "version": "0.1.0"
+    }
+  ]
+}

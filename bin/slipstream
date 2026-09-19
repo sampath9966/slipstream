@@ -1,0 +1,611 @@
+#!/usr/bin/env python3
+"""slipstream engine — session economics for Claude Code.
+
+No telemetry. Everything stays on your machine.
+"""
+
+import argparse
+import json
+import os
+import signal
+import sqlite3
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Config / paths
+# ---------------------------------------------------------------------------
+
+def db_path() -> Path:
+    env = os.environ.get("SLIPSTREAM_DB")
+    if env:
+        return Path(env)
+    xdg = os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
+    return Path(xdg) / "slipstream" / "ledger.db"
+
+
+def get_config() -> dict:
+    defaults = {
+        "warn_threshold_pct": 70,
+        "critical_threshold_pct": 90,
+        "window_tokens": 1_000_000,
+        "modules": {"ledger": True, "queue": False, "anchor": False, "guard": False},
+    }
+    env_path = os.environ.get("SLIPSTREAM_CONFIG")
+    if env_path and Path(env_path).exists():
+        try:
+            with open(env_path) as f:
+                return {**defaults, **json.load(f)}
+        except Exception:
+            pass
+    return defaults
+
+
+# ---------------------------------------------------------------------------
+# DB setup
+# ---------------------------------------------------------------------------
+
+def open_db(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    _migrate(conn)
+    return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);
+
+        CREATE TABLE IF NOT EXISTS turns (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id      TEXT NOT NULL,
+            prompt_id       TEXT,
+            project         TEXT,
+            model           TEXT,
+            ts              REAL NOT NULL,
+            input_tokens    INTEGER NOT NULL DEFAULT 0,
+            output_tokens   INTEGER NOT NULL DEFAULT 0,
+            cache_read_tokens  INTEGER NOT NULL DEFAULT 0,
+            cache_write_tokens INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS tool_uses (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id  TEXT NOT NULL,
+            prompt_id   TEXT,
+            tool_name   TEXT NOT NULL,
+            file_paths  TEXT,
+            ts          REAL NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id);
+        CREATE INDEX IF NOT EXISTS idx_turns_ts ON turns(ts);
+        CREATE INDEX IF NOT EXISTS idx_tool_uses_session ON tool_uses(session_id);
+        CREATE INDEX IF NOT EXISTS idx_tool_uses_tool ON tool_uses(tool_name);
+    """)
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Transcript parsing
+# ---------------------------------------------------------------------------
+
+def parse_transcript(path: str) -> dict:
+    """Return token usage from the last assistant turn in a JSONL transcript."""
+    p = Path(path)
+    if not p.exists():
+        return {}
+
+    usage = {}
+    model = None
+    try:
+        with open(p) as f:
+            lines = f.readlines()
+
+        # Walk from the end; find the last assistant entry with usage
+        for line in reversed(lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+            # Various transcript formats Claude Code may emit
+            # Format 1: {"role": "assistant", "usage": {...}}
+            if obj.get("role") == "assistant" and "usage" in obj:
+                u = obj["usage"]
+                usage = _extract_usage(u)
+                model = obj.get("model")
+                break
+
+            # Format 2: {"type": "assistant", "message": {"usage": {...}}}
+            if obj.get("type") == "assistant":
+                msg = obj.get("message", {})
+                if "usage" in msg:
+                    usage = _extract_usage(msg["usage"])
+                    model = msg.get("model")
+                    break
+
+            # Format 3: top-level message with usage
+            if "usage" in obj and isinstance(obj.get("usage"), dict):
+                u = obj["usage"]
+                if any(k in u for k in ("input_tokens", "output_tokens")):
+                    usage = _extract_usage(u)
+                    model = obj.get("model")
+                    break
+
+    except Exception:
+        pass
+
+    if model:
+        usage["model"] = model
+    return usage
+
+
+def _extract_usage(u: dict) -> dict:
+    return {
+        "input_tokens": int(u.get("input_tokens", 0)),
+        "output_tokens": int(u.get("output_tokens", 0)),
+        "cache_read_tokens": int(
+            u.get("cache_read_input_tokens", u.get("cache_read_tokens", 0))
+        ),
+        "cache_write_tokens": int(
+            u.get("cache_creation_input_tokens", u.get("cache_write_tokens", 0))
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+def cmd_record(args) -> int:
+    """Stop hook: record token usage for the completed turn."""
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        return 0  # never crash the session
+
+    session_id = payload.get("session_id", "unknown")
+    prompt_id = payload.get("prompt_id")
+    transcript_path = payload.get("transcript_path", "")
+    cwd = payload.get("cwd", "")
+
+    usage = parse_transcript(transcript_path)
+    if not usage:
+        return 0  # no data to record, that's fine
+
+    try:
+        conn = open_db(db_path())
+        conn.execute(
+            """INSERT INTO turns
+               (session_id, prompt_id, project, model, ts,
+                input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                session_id,
+                prompt_id,
+                cwd,
+                usage.get("model"),
+                time.time(),
+                usage.get("input_tokens", 0),
+                usage.get("output_tokens", 0),
+                usage.get("cache_read_tokens", 0),
+                usage.get("cache_write_tokens", 0),
+            ),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass  # never crash the session
+    return 0
+
+
+def cmd_record_tool(args) -> int:
+    """PostToolUse hook: record tool name and file paths for this tool call."""
+    try:
+        payload = json.load(sys.stdin)
+    except Exception:
+        return 0
+
+    session_id = payload.get("session_id", "unknown")
+    prompt_id = payload.get("prompt_id")
+    tool_name = payload.get("tool_name", "unknown")
+    tool_input = payload.get("tool_input", {})
+
+    # Extract file paths from common tool input shapes
+    file_paths = _extract_file_paths(tool_name, tool_input)
+
+    try:
+        conn = open_db(db_path())
+        conn.execute(
+            """INSERT INTO tool_uses (session_id, prompt_id, tool_name, file_paths, ts)
+               VALUES (?, ?, ?, ?, ?)""",
+            (
+                session_id,
+                prompt_id,
+                tool_name,
+                json.dumps(file_paths) if file_paths else None,
+                time.time(),
+            ),
+        )
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    return 0
+
+
+def _extract_file_paths(tool_name: str, tool_input: dict) -> list:
+    paths = []
+    # Read / Write / Edit / Glob tools
+    for key in ("file_path", "path"):
+        if key in tool_input and isinstance(tool_input[key], str):
+            paths.append(tool_input[key])
+    # MultiEdit
+    if "edits" in tool_input and isinstance(tool_input["edits"], list):
+        for e in tool_input["edits"]:
+            if isinstance(e, dict) and "file_path" in e:
+                paths.append(e["file_path"])
+    # Glob returns a list; record the pattern as the "path"
+    if tool_name == "Glob" and "pattern" in tool_input:
+        paths.append(tool_input["pattern"])
+    # Bash doesn't have file paths, skip
+    return list(dict.fromkeys(paths))  # deduplicate, preserve order
+
+
+def cmd_report(args) -> int:
+    """Render a burn report, optionally as JSON."""
+    try:
+        conn = open_db(db_path())
+    except Exception as e:
+        print(f"slipstream: cannot open DB: {e}", file=sys.stderr)
+        return 1
+
+    config = get_config()
+    window = config.get("window_tokens", 1_000_000)
+
+    # --session filters to a single session
+    session_filter = getattr(args, "session", None)
+    # --days filters to N days
+    days = getattr(args, "days", 7)
+    since = time.time() - days * 86400
+
+    where_turns = "WHERE t.ts >= ?"
+    params_turns: list = [since]
+    if session_filter:
+        where_turns += " AND t.session_id = ?"
+        params_turns.append(session_filter)
+
+    # Totals
+    totals = conn.execute(
+        f"""SELECT
+              COUNT(DISTINCT session_id) as sessions,
+              SUM(input_tokens) as input,
+              SUM(output_tokens) as output,
+              SUM(cache_read_tokens) as cache_read,
+              SUM(cache_write_tokens) as cache_write,
+              SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) as total
+            FROM turns t {where_turns}""",
+        params_turns,
+    ).fetchone()
+
+    # Per-tool breakdown
+    where_tools = "WHERE tu.ts >= ?"
+    params_tools: list = [since]
+    if session_filter:
+        where_tools += " AND tu.session_id = ?"
+        params_tools.append(session_filter)
+
+    per_tool = conn.execute(
+        f"""SELECT tool_name, COUNT(*) as calls
+            FROM tool_uses tu {where_tools}
+            GROUP BY tool_name ORDER BY calls DESC""",
+        params_tools,
+    ).fetchall()
+
+    # Per-file breakdown (files read by Read/Edit/Write tools)
+    read_tools = ("Read", "Edit", "Write", "MultiEdit")
+    placeholders = ",".join("?" * len(read_tools))
+    per_file_q = f"""
+        SELECT file_paths, COUNT(*) as reads
+        FROM tool_uses tu
+        {where_tools} AND tool_name IN ({placeholders})
+        AND file_paths IS NOT NULL
+        GROUP BY file_paths ORDER BY reads DESC
+        LIMIT 20
+    """
+    per_file_rows = conn.execute(per_file_q, params_tools + list(read_tools)).fetchall()
+
+    # Flatten file paths (each row may have JSON list)
+    file_counts: dict = {}
+    for row in per_file_rows:
+        try:
+            paths = json.loads(row["file_paths"])
+        except Exception:
+            paths = [row["file_paths"]]
+        for p in paths:
+            file_counts[p] = file_counts.get(p, 0) + row["reads"]
+    file_counts_sorted = sorted(file_counts.items(), key=lambda x: -x[1])
+
+    # Per-session rollup
+    per_session = conn.execute(
+        f"""SELECT session_id, project,
+              SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) as total,
+              COUNT(*) as turns,
+              MIN(ts) as started, MAX(ts) as last_ts
+            FROM turns t {where_turns}
+            GROUP BY session_id ORDER BY last_ts DESC LIMIT 10""",
+        params_turns,
+    ).fetchall()
+
+    conn.close()
+
+    total_tokens = totals["total"] or 0
+
+    if getattr(args, "json", False):
+        out = {
+            "window_days": days,
+            "totals": dict(totals),
+            "per_tool": [dict(r) for r in per_tool],
+            "per_file": [{"path": p, "reads": c} for p, c in file_counts_sorted],
+            "per_session": [dict(r) for r in per_session],
+        }
+        print(json.dumps(out, indent=2))
+        return 0
+
+    # Human-readable report
+    bar = "─" * 62
+    print(f"\n{'Slipstream Burn Report':^62}")
+    print(f"{'last ' + str(days) + ' days · no telemetry · local only':^62}")
+    print(bar)
+
+    pct = (total_tokens / window * 100) if window > 0 else 0
+    print(f"  Total tokens   : {total_tokens:>12,}  ({pct:.1f}% of {window:,} window)")
+    print(f"  Input          : {totals['input'] or 0:>12,}")
+    print(f"  Output         : {totals['output'] or 0:>12,}")
+    print(f"  Cache read     : {totals['cache_read'] or 0:>12,}")
+    print(f"  Cache write    : {totals['cache_write'] or 0:>12,}")
+    print(f"  Sessions       : {totals['sessions'] or 0:>12,}")
+    print()
+
+    # Headline file stat
+    if file_counts_sorted and total_tokens > 0:
+        top_n = min(11, len(file_counts_sorted))
+        top_reads = sum(c for _, c in file_counts_sorted[:top_n])
+        all_reads = sum(c for _, c in file_counts_sorted)
+        if all_reads > 0:
+            pct_files = top_reads / all_reads * 100
+            print(f"  ★  {pct_files:.0f}% of file reads this period came from re-reading {top_n} files.")
+            print()
+
+    print(f"  Tool calls (last {days}d):")
+    for row in per_tool[:15]:
+        print(f"    {row['tool_name']:<30} {row['calls']:>6} calls")
+
+    print()
+    print(f"  Most-read files (last {days}d):")
+    for path, cnt in file_counts_sorted[:15]:
+        short = _shorten_path(path)
+        print(f"    {short:<48} {cnt:>4}×")
+
+    print()
+    print(f"  Recent sessions:")
+    for row in per_session:
+        started = datetime.fromtimestamp(row["started"], tz=timezone.utc).strftime("%m-%d %H:%M")
+        proj = _shorten_path(row["project"] or "")
+        print(
+            f"    {started}  {proj:<30}  {row['total']:>9,} tok  {row['turns']} turns"
+        )
+
+    print(bar)
+    print()
+    return 0
+
+
+def cmd_statusline(args) -> int:
+    """Print a compact statusline fragment: burn% and projected exhaustion."""
+    try:
+        conn = open_db(db_path())
+    except Exception:
+        print("?")
+        return 0
+
+    config = get_config()
+    window = config.get("window_tokens", 1_000_000)
+
+    # Tokens in last 5 hours (rolling window approximation)
+    since = time.time() - 5 * 3600
+    row = conn.execute(
+        """SELECT SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) as total,
+                  COUNT(*) as turns, MIN(ts) as first_ts
+           FROM turns WHERE ts >= ?""",
+        (since,),
+    ).fetchone()
+    conn.close()
+
+    total = row["total"] or 0
+    turns = row["turns"] or 0
+    pct = total / window * 100 if window > 0 else 0
+
+    if turns > 1 and row["first_ts"]:
+        elapsed = time.time() - row["first_ts"]
+        rate = total / elapsed if elapsed > 0 else 0
+        remaining = (window - total) / rate if rate > 0 else None
+        if remaining and remaining > 0:
+            hrs = remaining / 3600
+            eta = f" ~{hrs:.1f}h left"
+        else:
+            eta = ""
+    else:
+        eta = ""
+
+    symbol = "▓" if pct >= 90 else ("▒" if pct >= 70 else "░")
+    print(f"{symbol} {pct:.0f}%{eta}")
+    return 0
+
+
+def cmd_monitor(args) -> int:
+    """Persistent monitor: emit budget warnings when thresholds are crossed."""
+    session_id = getattr(args, "session_id", None)
+    config = get_config()
+    warn = config.get("warn_threshold_pct", 70)
+    critical = config.get("critical_threshold_pct", 90)
+    window = config.get("window_tokens", 1_000_000)
+
+    warned = set()  # track which thresholds already fired
+
+    def sigterm(_sig, _frame):
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, sigterm)
+
+    while True:
+        try:
+            conn = open_db(db_path())
+            since = time.time() - 5 * 3600
+            q = "SELECT SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens) as total FROM turns WHERE ts >= ?"
+            params: list = [since]
+            if session_id:
+                q += " AND session_id = ?"
+                params.append(session_id)
+            row = conn.execute(q, params).fetchone()
+            conn.close()
+
+            total = row["total"] or 0
+            pct = total / window * 100 if window > 0 else 0
+
+            if pct >= critical and "critical" not in warned:
+                warned.add("critical")
+                warned.discard("warn")
+                print(
+                    f"[slipstream] ⚠️  CRITICAL: {pct:.0f}% of rolling window consumed "
+                    f"({total:,}/{window:,} tokens). Approaching limit.",
+                    flush=True,
+                )
+            elif pct >= warn and "warn" not in warned:
+                warned.add("warn")
+                print(
+                    f"[slipstream] ⚡ {pct:.0f}% of rolling window consumed "
+                    f"({total:,}/{window:,} tokens).",
+                    flush=True,
+                )
+            elif pct < warn * 0.9:
+                warned.discard("warn")
+                warned.discard("critical")
+
+        except Exception:
+            pass
+
+        time.sleep(30)
+
+
+def cmd_doctor(args) -> int:
+    """Check hook installation, DB health, and config."""
+    ok = True
+    print("slipstream doctor\n")
+
+    # DB
+    path = db_path()
+    print(f"  DB path: {path}")
+    try:
+        conn = open_db(path)
+        turns = conn.execute("SELECT COUNT(*) FROM turns").fetchone()[0]
+        tools = conn.execute("SELECT COUNT(*) FROM tool_uses").fetchone()[0]
+        conn.close()
+        print(f"  DB: OK  ({turns} turns, {tools} tool uses recorded)")
+    except Exception as e:
+        print(f"  DB: ERROR — {e}")
+        ok = False
+
+    # Config
+    config = get_config()
+    print(f"  Config: window={config['window_tokens']:,} tokens, "
+          f"warn={config['warn_threshold_pct']}%, "
+          f"critical={config['critical_threshold_pct']}%")
+
+    # Plugin root
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    print(f"  CLAUDE_PLUGIN_ROOT: {plugin_root or '(not set — run inside Claude Code)'}")
+
+    # Executable
+    this = Path(__file__).resolve()
+    print(f"  Engine: {this}")
+    if not os.access(this, os.X_OK):
+        print("  Engine: NOT executable — run: chmod +x bin/slipstream")
+        ok = False
+
+    print()
+    print("  Status:", "✔ healthy" if ok else "✘ issues found (see above)")
+    return 0 if ok else 1
+
+
+def _shorten_path(p: str) -> str:
+    if not p:
+        return ""
+    home = str(Path.home())
+    if p.startswith(home):
+        p = "~" + p[len(home):]
+    if len(p) > 48:
+        p = "…" + p[-47:]
+    return p
+
+
+# ---------------------------------------------------------------------------
+# CLI entrypoint
+# ---------------------------------------------------------------------------
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="slipstream",
+        description="Session economics engine for Claude Code.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("record", help="(hook) Record turn token usage from stdin payload")
+    sub.add_parser("record-tool", help="(hook) Record tool use from stdin payload")
+
+    p_report = sub.add_parser("report", help="Print burn report")
+    p_report.add_argument("--json", action="store_true", help="Output JSON")
+    p_report.add_argument("--days", type=int, default=7, help="Look-back window in days")
+    p_report.add_argument("--session", help="Filter to a single session ID")
+
+    sub.add_parser("statusline", help="Print compact statusline fragment")
+
+    p_mon = sub.add_parser("monitor", help="Persistent in-session budget monitor")
+    p_mon.add_argument("--session-id", dest="session_id", help="Session to monitor")
+
+    sub.add_parser("doctor", help="Check installation health")
+
+    args = parser.parse_args()
+
+    dispatch = {
+        "record": cmd_record,
+        "record-tool": cmd_record_tool,
+        "report": cmd_report,
+        "statusline": cmd_statusline,
+        "monitor": cmd_monitor,
+        "doctor": cmd_doctor,
+    }
+
+    handler = dispatch.get(args.command)
+    if handler is None:
+        parser.print_help()
+        return 1
+
+    try:
+        return handler(args) or 0
+    except KeyboardInterrupt:
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

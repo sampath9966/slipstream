@@ -1,0 +1,9 @@
+{
+  "plugins": [
+    {
+      "type": "github",
+      "repo": "sampath9966/splitstream",
+      "ref": "main"
+    }
+  ]
+}

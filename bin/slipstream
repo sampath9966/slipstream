@@ -1100,9 +1100,7 @@ def _load_rules(project_dir: str) -> list:
 
 
 def _matches_command(pattern: str, command: str) -> bool:
-    pattern = pattern.lower().strip()
-    command = command.lower().strip()
-    return pattern in command or re.search(re.escape(pattern), command) is not None
+    return pattern.lower().strip() in command.lower().strip()
 
 
 def cmd_guard_check(args) -> int:
@@ -1672,6 +1670,10 @@ def main():
     p_queue = sub.add_parser("queue")
     p_queue.add_argument("--status")
     p_queue.add_argument("--json", action="store_true")
+    p_queue_sub = p_queue.add_subparsers(dest="queue_action")
+    p_ql = p_queue_sub.add_parser("list")
+    p_ql.add_argument("--status")
+    p_ql.add_argument("--json", action="store_true")
 
     p_svc = sub.add_parser("service")
     p_svc.add_argument("action", choices=["install", "uninstall", "status"])

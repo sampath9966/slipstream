@@ -2,7 +2,7 @@
   "name": "slipstream",
   "displayName": "Slipstream",
   "description": "Session economics for Claude Code — burn ledger, window-aware queue, compaction anchor, rule guard.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "author": {
     "name": "sampath9966",
     "url": "https://github.com/sampath9966/splitstream"
@@ -36,15 +36,27 @@
       "description": "Your rolling usage window token budget. Slipstream uses this to estimate % burn.",
       "default": 1000000
     },
+    "pacing_threshold_pct": {
+      "type": "number",
+      "title": "Pacing governor threshold (%)",
+      "description": "Queue dispatcher starts inserting delays when burn crosses this percentage.",
+      "default": 60
+    },
+    "pacing_max_delay": {
+      "type": "number",
+      "title": "Pacing maximum delay (seconds)",
+      "description": "Maximum delay inserted between dispatched jobs at 100% burn.",
+      "default": 300
+    },
     "modules": {
       "type": "object",
       "title": "Module toggles",
       "description": "Enable or disable individual modules.",
       "default": {
         "ledger": true,
-        "queue": false,
-        "anchor": false,
-        "guard": false
+        "queue": true,
+        "anchor": true,
+        "guard": true
       }
     }
   }

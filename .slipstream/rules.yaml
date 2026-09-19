@@ -1,0 +1,32 @@
+rules:
+  # Block force-push — use --force-with-lease or a PR instead
+  - name: no-force-push
+    match:
+      tool: Bash
+      command_contains: "push --force"
+    action: block
+    reason: "Force-push is not allowed. Use --force-with-lease or open a PR."
+
+  # Block hard resets that discard uncommitted work
+  - name: no-reset-hard
+    match:
+      tool: Bash
+      command_contains: "reset --hard"
+    action: block
+    reason: "git reset --hard discards uncommitted work. Stash first or use --soft."
+
+  # Warn on rm -rf anywhere in the repo
+  - name: warn-rm-rf
+    match:
+      tool: Bash
+      command_contains: "rm -rf"
+    action: warn
+    reason: "rm -rf detected — verify target path before proceeding."
+
+  # Block skipping commit hooks
+  - name: no-no-verify
+    match:
+      tool: Bash
+      command_contains: "--no-verify"
+    action: block
+    reason: "Bypassing commit hooks (--no-verify) is not allowed."

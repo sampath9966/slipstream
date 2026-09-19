@@ -190,3 +190,38 @@ class TestFilePathExtraction:
     def test_deduplication(self):
         paths = ss._extract_file_paths("Edit", {"file_path": "/a.py", "path": "/a.py"})
         assert paths.count("/a.py") == 1
+
+
+# ---------------------------------------------------------------------------
+# Pacing governor
+# ---------------------------------------------------------------------------
+
+class TestPacingGovernor:
+    def cfg(self, threshold=60, max_delay=300):
+        return {"pacing_threshold_pct": threshold, "pacing_max_delay": max_delay}
+
+    def test_below_threshold_returns_zero(self):
+        assert ss.pace_delay(0.0, self.cfg()) == 0.0
+        assert ss.pace_delay(59.9, self.cfg()) == 0.0
+
+    def test_at_threshold_returns_zero(self):
+        assert ss.pace_delay(60.0, self.cfg()) == 0.0
+
+    def test_at_100pct_returns_max_delay(self):
+        assert ss.pace_delay(100.0, self.cfg()) == 300.0
+
+    def test_midpoint_returns_half_max(self):
+        # threshold=60, max=300 → midpoint at 80% → 150 s
+        result = ss.pace_delay(80.0, self.cfg())
+        assert abs(result - 150.0) < 0.01
+
+    def test_custom_threshold(self):
+        # threshold=80, max=60 → at 90% (halfway) → 30 s
+        result = ss.pace_delay(90.0, self.cfg(threshold=80, max_delay=60))
+        assert abs(result - 30.0) < 0.01
+
+    def test_above_100_clamped_to_max(self):
+        assert ss.pace_delay(110.0, self.cfg()) == 300.0
+
+    def test_zero_max_delay(self):
+        assert ss.pace_delay(100.0, self.cfg(max_delay=0)) == 0.0

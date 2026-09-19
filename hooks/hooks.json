@@ -25,6 +25,45 @@
           }
         ]
       }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": ["anchor", "snapshot"],
+            "timeout": 15,
+            "statusMessage": "slipstream: snapshotting anchor before compaction"
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": ["anchor", "inject"],
+            "timeout": 15,
+            "statusMessage": "slipstream: re-injecting anchor after compaction"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": ["guard", "check"],
+            "timeout": 5,
+            "statusMessage": "slipstream: checking rule guard"
+          }
+        ]
+      }
     ]
   }
 }

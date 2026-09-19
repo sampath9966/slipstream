@@ -53,9 +53,9 @@ $ /slipstream:report
 | Module | Status | What it does |
 |--------|--------|--------------|
 | **ledger** | ✅ v0.1.0 | Token burn ledger — per turn, per tool, per file |
-| **queue** | 🚧 planned | Window-aware job queue with pacing governor |
-| **anchor** | 🚧 planned | Compaction snapshot — survive context resets |
-| **guard** | 🚧 planned | Enforce CLAUDE.md rules at tool-use time |
+| **queue** | ✅ v0.2.0 | Window-aware job queue with pacing governor |
+| **anchor** | ✅ v0.2.0 | Compaction snapshot — survive context resets |
+| **guard** | ✅ v0.2.0 | Enforce CLAUDE.md rules at tool-use time |
 
 Each module is independently toggleable in plugin config.
 
@@ -85,6 +85,57 @@ Output: `▓ 91% ~0.4h left` (critical) / `▒ 71%` (warn) / `░ 43%` (normal)
 slipstream report --json --days 1 | jq '.totals.total'
 slipstream report --json | jq '.per_file[:5]'
 ```
+
+## Module 2 — Window-Aware Queue
+
+Queue long-running prompts so they run when the window has budget. The pacing
+governor inserts delays as burn rises past the threshold, ramping linearly to
+`pacing_max_delay` at 100% burn.
+
+```bash
+slipstream queue add --prompt "Refactor auth module"
+slipstream queue list
+slipstream queue approve <job_id>
+slipstream queue dispatch            # respects pacing delay
+slipstream service install           # launchd (macOS) or systemd user unit (Linux)
+```
+
+Set `ANTHROPIC_API_KEY` to enable Haiku pre-flight (one-sentence cost estimate
+before each job is queued). Pre-flight is skipped silently if the key is absent.
+
+## Module 3 — Compaction Anchor
+
+Prevents loss of context across automatic compaction. The `PreCompact` hook
+snapshots key decisions and file hashes; the `PostCompact` hook re-injects a
+≤ 2 000-token anchor block so work resumes without missing state.
+
+```bash
+slipstream anchor snapshot --session-id <id> --transcript-path <path>
+slipstream anchor inject   --session-id <id>
+```
+
+## Module 4 — Rule Guard
+
+Declarative tool-use rules enforced at `PreToolUse`. Exit code 2 blocks the
+tool and surfaces the reason to Claude before it runs.
+
+```bash
+slipstream guard init       # generate rules.yaml from CLAUDE.md
+slipstream guard check      # called by PreToolUse hook automatically
+```
+
+Example `.slipstream/rules.yaml`:
+```yaml
+rules:
+  - name: no-force-push
+    match:
+      tool: Bash
+      command_contains: "push --force"
+    action: block
+    reason: "Force-push is not allowed. Use --force-with-lease or a PR."
+```
+
+See `skills/guard/SKILL.md` for full match-key and action reference.
 
 ## Configuration
 
@@ -120,13 +171,17 @@ slipstream doctor
 slipstream/
 ├── .claude-plugin/plugin.json    # Plugin manifest
 ├── .claude-plugin/marketplace.json
-├── hooks/hooks.json              # Stop → record, PostToolUse → record-tool
+├── hooks/hooks.json              # Stop/PostToolUse/PreCompact/PostCompact/PreToolUse
 ├── skills/report/                # /slipstream:report
 ├── skills/doctor/                # /slipstream:doctor
 ├── skills/setup/                 # /slipstream:setup
+├── skills/queue/                 # /slipstream:queue
+├── skills/anchor/                # /slipstream:anchor
+├── skills/guard/                 # /slipstream:guard
 ├── monitors/monitors.json        # In-session budget warnings
 ├── bin/slipstream                # Engine (Python 3.11+, stdlib + sqlite3)
-└── tests/test_ledger.py          # Ledger math and parser tests
+├── .slipstream/rules.yaml        # Example guard rules
+└── tests/test_ledger.py          # Ledger math, parser, and pacing governor tests
 ```
 
 Design rule: **hooks do the capture, `bin/` does the work, skills are the human interface.** Hooks exit cleanly on any error — they never block or crash a session.

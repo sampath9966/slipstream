@@ -20,6 +20,16 @@ Walk the user through slipstream initial setup.
 
    Then set `SLIPSTREAM_CONFIG=~/.local/share/slipstream/config.json` in their shell profile, or tell them to set it.
 
-5. Run `slipstream doctor` again to confirm healthy.
+5. Run `slipstream install-statusline` to wire Slipstream into Claude Code's status bar.
+   This adds `"statusLine": {"command": "slipstream statusline"}` to `~/.claude/settings.json`
+   so the burn / drift / saved-token bar appears alongside Claude Code's own PR indicator:
+
+   ```
+   ⚡ ████████·· 68%  ·  🎯 ██·····  14%  ·  ↓ 84.2k
+   ```
+
+   If they already have a custom statusLine command, show them the manual edit instead.
+
+6. Run `slipstream doctor` again to confirm healthy.
 
 Tell the user: no data ever leaves their machine. The ledger is at `~/.local/share/slipstream/ledger.db` (or `$SLIPSTREAM_DB`) and is never uploaded anywhere.

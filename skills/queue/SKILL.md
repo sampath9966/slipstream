@@ -1,3 +1,8 @@
+---
+name: queue
+description: Manage the window-aware job queue — list, approve, and dispatch pending jobs. Works in desktop, mobile, and CLI.
+---
+
 # /slipstream:queue
 
 Manage the window-aware job queue (Module 2).

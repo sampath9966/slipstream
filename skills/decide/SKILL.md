@@ -1,3 +1,8 @@
+---
+name: decide
+description: Get Haiku-powered decision briefs for pending queue jobs — 10× faster than reading each prompt manually.
+---
+
 # /slipstream:decide
 
 Surface Haiku-powered decision briefs for pending queue jobs.

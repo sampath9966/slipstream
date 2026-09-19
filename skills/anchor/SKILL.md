@@ -1,6 +1,11 @@
+---
+name: anchor
+description: Snapshot your session context before compaction — or recover it after. Works in desktop, mobile, and CLI with no terminal needed.
+---
+
 # /slipstream:anchor
 
-Manage the compaction anchor (Module 3).
+Manage the compaction anchor — snapshot context before it's lost. Works in desktop, mobile, and CLI.
 
 ## Usage
 
@@ -8,49 +13,59 @@ Manage the compaction anchor (Module 3).
 /slipstream:anchor
 ```
 
-## What this skill does
+Or say: "Snapshot my context" / "Save my progress before compaction"
 
-The anchor module preserves continuity across Claude Code's automatic context
-compaction. Before compaction fires (`PreCompact` hook) it snapshots:
+## How to run it
 
-- Key decisions extracted from the transcript (regex: "decided", "chose", "will", etc.)
-- File hashes for the 20 most-recently touched files
-- Active session metadata (session ID, timestamp, burn percentage)
-
-After compaction fires (`PostCompact` hook) it re-injects a compact summary
-(≤ 2 000 tokens) so Claude resumes with full situational awareness.
-
-## Commands
+**Try the CLI first:**
 
 ```bash
-# Manual snapshot (normally called by PreCompact hook)
-slipstream anchor snapshot --session-id <id> --transcript-path <path>
-
-# Manual inject (normally called by PostCompact hook)
-slipstream anchor inject --session-id <id>
-
-# Show current anchor for a session
-slipstream anchor show --session-id <id>
+slipstream anchor $ARGUMENTS
 ```
 
-## Snapshot format
+**If the CLI is not found or Bash is unavailable** (desktop/mobile), produce the anchor inline:
 
-The injected anchor block looks like:
+When the user asks to snapshot their context, generate an anchor block directly from the current conversation — no file system access needed:
 
 ```
-=== SLIPSTREAM ANCHOR (restored after compaction) ===
-Session: <id>  Captured: <ISO timestamp>  Burn: <pct>%
+=== SLIPSTREAM ANCHOR ===
+Captured: <current timestamp>
 
 KEY DECISIONS
-• <decision 1>
-• <decision 2>
-...
+• <extract 5–10 decisions from the conversation: things decided, chosen, ruled out>
 
-FILE STATE (sha256 prefix)
-  /path/to/file.py  abc123
-  ...
+CURRENT TASK
+<one sentence: what we are in the middle of right now>
+
+FILES IN PLAY
+<list any file paths mentioned or edited in this session>
+
+NEXT STEPS
+• <the immediate next action we were about to take>
+• <any pending items the user mentioned>
+
+CONTEXT NOTES
+<any constraints, rules, or preferences the user stated>
 === END ANCHOR ===
 ```
 
-The block is kept under 2 000 tokens by truncating the decisions list and
-abbreviating file paths with `~` for the home directory.
+Tell the user: "Paste this block at the start of your next session's first message and I'll pick up exactly where we left off."
+
+## Manual CLI commands (for terminal users)
+
+```bash
+# Snapshot current session
+slipstream anchor snapshot --session-id <id> --transcript-path <path>
+
+# Re-inject after compaction
+slipstream anchor inject --session-id <id>
+
+# Show saved anchor
+slipstream anchor show --session-id <id>
+```
+
+## What the anchor block is used for
+
+The `PreCompact` hook calls `slipstream anchor snapshot` automatically before Claude Code compacts the context. The `PostCompact` hook calls `slipstream anchor inject` to re-inject the saved summary.
+
+On desktop/mobile where hooks aren't available, you can trigger the same effect manually: ask me "save my anchor" at any point and I'll produce the block above. Paste it into the next session to restore context.

@@ -32,7 +32,25 @@ This skill is the **no-CLI equivalent** of the full slipstream toolkit. It reads
 
 ## How to run it
 
-When this skill is invoked, do the following steps **without running any shell command**. If `Bash` is available, you may use it to query SQLite — but if it is not (desktop/mobile), fall back to the pure-conversation path.
+### Step 0 — Silent auto-setup (always first)
+
+Before anything else, silently ensure config exists — **no questions**:
+
+```bash
+python3 - <<'AUTOSETUP'
+import json, os
+from pathlib import Path
+xdg = os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
+cfg_dir = Path(f"{xdg}/slipstream")
+cfg_dir.mkdir(parents=True, exist_ok=True)
+cfg_path = cfg_dir / "config.json"
+if not cfg_path.exists():
+    cfg_path.write_text(json.dumps({
+        "window_tokens": 1000000, "warn_threshold_pct": 70, "critical_threshold_pct": 90,
+        "cost_per_mtok_input": 3.00, "cost_per_mtok_cache_read": 0.30
+    }, indent=2))
+AUTOSETUP
+```
 
 ### Step 1 — Try to read the ledger
 
@@ -109,9 +127,9 @@ EOF
 > **[burn bar]** ░▒▓ X% of window used · ~Y hours left at current pace
 
 **Where your tokens went**
-- Top re-read file: `<path>` — Xk tokens, read N×. [pin it to CLAUDE.md to cut cost 90%]
+- Top re-read file: `<path>` — Xk tokens, read N×, wasting ~$X.XX/week → pin it to CLAUDE.md to cut that 90%
 - Most-called tool: `<tool>` (N calls)
-- Sessions this week: N
+- Sessions this week: N · estimated cost: ~$X.XX
 
 **My recommendation**
 [One of the three advisor stances below, based on burn %:]

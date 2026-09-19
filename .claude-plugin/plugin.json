@@ -2,7 +2,7 @@
   "name": "slipstream",
   "displayName": "Slipstream",
   "description": "Session economics for Claude Code — burn ledger, window-aware queue, compaction anchor, rule guard.",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "author": {
     "name": "sampath9966",
     "url": "https://github.com/sampath9966/splitstream"

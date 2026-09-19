@@ -287,11 +287,6 @@ def current_burn_pct(conn: sqlite3.Connection, config: dict) -> float:
 
 
 def pace_delay(pct_burned: float, config: dict) -> float:
-    """Return seconds to wait before dispatching the next job.
-
-    Under threshold: 0 (front-load).
-    Above threshold: linear ramp to max_delay at 100%.
-    """
     threshold = config.get("pacing_threshold_pct", 60)
     max_delay = config.get("pacing_max_delay", 300)
     if pct_burned < threshold:
@@ -337,7 +332,6 @@ def cmd_record(args) -> int:
         )
         conn.commit()
 
-        # Store session intent from transcript (first user message)
         existing = conn.execute(
             "SELECT id FROM session_intents WHERE session_id=?", (session_id,)
         ).fetchone()
@@ -352,7 +346,6 @@ def cmd_record(args) -> int:
 
         config = get_config()
 
-        # Spike detection
         spike_msg = _detect_spike(conn, session_id, usage, now, config)
         if spike_msg:
             conn.execute(
@@ -362,7 +355,6 @@ def cmd_record(args) -> int:
             conn.commit()
             print(f"[slipstream] ⚡ COST SPIKE: {spike_msg}", flush=True)
 
-        # Loop detection
         loop_msg = _detect_loop(conn, session_id)
         if loop_msg:
             conn.execute(
@@ -372,7 +364,6 @@ def cmd_record(args) -> int:
             conn.commit()
             print(f"[slipstream] 🔁 LOOP DETECTED: {loop_msg}", flush=True)
 
-        # Drift detection
         drift_msg = _detect_drift(conn, session_id, now)
         if drift_msg:
             conn.execute(
@@ -411,7 +402,6 @@ def cmd_record_tool(args) -> int:
         conn.commit()
 
         for fp in file_paths:
-            # Stale read detection — warn if file changed since last read in this session
             if tool_name == "Read":
                 stale_msg = _check_stale_read(conn, session_id, fp, now)
                 if stale_msg:
@@ -422,7 +412,6 @@ def cmd_record_tool(args) -> int:
                     conn.commit()
                     print(f"[slipstream] 📂 STALE READ: {stale_msg}", flush=True)
 
-            # Decision logging + scope creep for write/edit actions
             if tool_name in ("Write", "Edit", "MultiEdit"):
                 desc = f"{tool_name} → {_shorten_path(fp)}"
                 ctx = json.dumps(tool_input)[:400]
@@ -432,7 +421,6 @@ def cmd_record_tool(args) -> int:
                 )
                 conn.commit()
 
-                # Scope creep detection
                 scope_msg = _check_scope_creep(conn, session_id, fp)
                 if scope_msg:
                     conn.execute(
@@ -585,36 +573,107 @@ def cmd_report(args) -> int:
     return 0
 
 
+_SUBBLOCK = " ▏▎▍▌▋▊▉█"  # 0..8 eighths for smooth bar rendering
+
+def _bar(pct: float, width: int = 8) -> str:
+    """Smooth Unicode progress bar using eighth-block characters."""
+    total_eighths = round(min(pct, 100) / 100 * width * 8)
+    full, remainder = divmod(total_eighths, 8)
+    bar = "█" * full
+    if remainder and full < width:
+        bar += _SUBBLOCK[remainder]
+        full += 1
+    bar += "·" * (width - full)
+    return bar
+
+
+def _ansi(text: str, code: str) -> str:
+    """Wrap text in ANSI colour code; strip if NO_COLOR or not a tty."""
+    if os.environ.get("NO_COLOR") or not sys.stdout.isatty():
+        return text
+    return f"\033[{code}m{text}\033[0m"
+
+
 def cmd_statusline(args) -> int:
     try:
         conn = open_db(db_path())
     except Exception:
-        print("?")
+        print("⚡ ? │ 🎯 ? │ 💾 ?")
         return 0
 
     config = get_config()
     window = config.get("window_tokens", 1_000_000)
+    warn_pct = config.get("warn_threshold_pct", 70)
+    crit_pct = config.get("critical_threshold_pct", 90)
     since = time.time() - 5 * 3600
+
+    session_id = os.environ.get("CLAUDE_SESSION_ID", "")
     row = conn.execute(
-        "SELECT SUM(input_tokens+output_tokens+cache_read_tokens+cache_write_tokens) as total, COUNT(*) as turns, MIN(ts) as first_ts FROM turns WHERE ts>=?",
+        """SELECT SUM(input_tokens+output_tokens+cache_read_tokens+cache_write_tokens) as total,
+                  SUM(cache_read_tokens) as cache_read,
+                  COUNT(*) as turns,
+                  MIN(ts) as first_ts
+           FROM turns WHERE ts>=?""",
         (since,),
     ).fetchone()
-    conn.close()
-
     total = row["total"] or 0
-    turns = row["turns"] or 0
-    pct = total / window * 100 if window > 0 else 0
+    cache_read = row["cache_read"] or 0
+    burn_pct = total / window * 100 if window > 0 else 0
 
-    eta = ""
-    if turns > 1 and row["first_ts"]:
-        elapsed = time.time() - row["first_ts"]
-        rate = total / elapsed if elapsed > 0 else 0
-        remaining = (window - total) / rate if rate > 0 else None
-        if remaining and remaining > 0:
-            eta = f" ~{remaining/3600:.1f}h left"
+    if burn_pct >= crit_pct:
+        burn_color = "31"
+    elif burn_pct >= warn_pct:
+        burn_color = "33"
+    else:
+        burn_color = "32"
 
-    symbol = "▓" if pct >= 90 else ("▒" if pct >= 70 else "░")
-    print(f"{symbol} {pct:.0f}%{eta}")
+    burn_bar = _bar(burn_pct)
+    burn_str = _ansi(burn_bar, burn_color) + _ansi(f" {burn_pct:.0f}%", burn_color)
+
+    drift_pct = 0.0
+    if session_id:
+        intent_row = conn.execute(
+            "SELECT intent FROM session_intents WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if intent_row:
+            intent = intent_row["intent"]
+            keywords = {w.lower() for w in re.split(r'\W+', intent) if len(w) > 3}
+            files_in_intent = set(re.findall(r'[\w./]+\.(?:py|ts|js|go|rs|rb|java|c|cpp|h|md|yaml|yml|json|toml)', intent))
+            cutoff = time.time() - 1800
+            edits = conn.execute(
+                "SELECT file_paths FROM tool_uses WHERE session_id=? AND tool_name IN ('Write','Edit','MultiEdit') AND ts>=?",
+                (session_id, cutoff),
+            ).fetchall()
+            if len(edits) >= 3:
+                unrelated = 0
+                for e in edits:
+                    fp = (json.loads(e["file_paths"]) if e["file_paths"] else [])
+                    fp_str = " ".join(fp).lower()
+                    if not any(k in fp_str for k in keywords) and not any(f in fp_str for f in files_in_intent):
+                        unrelated += 1
+                drift_pct = unrelated / len(edits) * 100
+
+    if drift_pct >= 60:
+        drift_color = "31"
+    elif drift_pct >= 40:
+        drift_color = "33"
+    else:
+        drift_color = "32"
+
+    drift_bar = _bar(drift_pct)
+    drift_str = _ansi(drift_bar, drift_color) + _ansi(f" {drift_pct:.0f}%", drift_color)
+
+    saved = int(cache_read * 0.90)
+    if saved >= 1_000_000:
+        saved_str = f"{saved/1_000_000:.1f}M"
+    elif saved >= 1_000:
+        saved_str = f"{saved/1_000:.1f}k"
+    else:
+        saved_str = str(saved)
+
+    sep = _ansi(" · ", "2")
+    print(f"⚡ {burn_str}{sep}🎯 {drift_str}{sep}↓ {_ansi(saved_str, '36')}")
+    conn.close()
     return 0
 
 
@@ -709,7 +768,6 @@ def _haiku_rewrite(prompt: str) -> tuple[str, list]:
 
 
 def cmd_add(args) -> int:
-    """Enqueue a job. Calls Haiku pre-flight if ANTHROPIC_API_KEY is set."""
     prompt = args.prompt
     cwd = getattr(args, "cwd", None) or os.getcwd()
     files = getattr(args, "files", None) or []
@@ -751,7 +809,6 @@ def cmd_add(args) -> int:
 
 
 def cmd_approve(args) -> int:
-    """Batch-approve or reject pending prompt rewrites."""
     conn = open_db(db_path())
     pending = conn.execute(
         "SELECT * FROM jobs WHERE status='pending_review' ORDER BY created_at"
@@ -828,7 +885,6 @@ def cmd_queue_list(args) -> int:
 
 
 def cmd_dispatch(args) -> int:
-    """Dispatcher loop: runs approved jobs via 'claude -p', respecting pacing."""
     config = get_config()
     output_dir = data_dir() / "outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -916,7 +972,6 @@ def cmd_dispatch(args) -> int:
 
 
 def cmd_service(args) -> int:
-    """Install/uninstall/status the dispatcher as an OS service."""
     action = args.action
     engine = str(Path(__file__).resolve())
     dispatch_cmd = f"{engine} dispatch"
@@ -1031,7 +1086,6 @@ def cmd_service(args) -> int:
 # ---------------------------------------------------------------------------
 
 def _extract_decisions(text: str) -> str:
-    """Heuristically extract decision statements from transcript text."""
     patterns = [
         r"(?i)(decided|will use|using|schema:|api:|we('ll| will)|going with|approach:)[^\n]{10,120}",
         r"(?i)(don't|do not|never|always|must)[^\n]{10,80}",
@@ -1058,7 +1112,6 @@ def _file_hash(path: str) -> str:
 
 
 def cmd_anchor_snapshot(args) -> int:
-    """PreCompact hook: write snapshot and print compact summary to stdout."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -1122,7 +1175,6 @@ def cmd_anchor_snapshot(args) -> int:
 
 
 def cmd_anchor_inject(args) -> int:
-    """PostCompact hook: re-inject the latest snapshot into the new context."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -1146,7 +1198,6 @@ def cmd_anchor_inject(args) -> int:
 
 
 def cmd_anchor(args) -> int:
-    """Inspect anchor snapshots for the current/specified session."""
     session_id = getattr(args, "session_id", None)
     conn = open_db(db_path())
 
@@ -1217,7 +1268,6 @@ def _matches_command(pattern: str, command: str) -> bool:
 
 
 def cmd_guard_check(args) -> int:
-    """PreToolUse hook: enforce rule guard on matching commands. Exit 2 to block."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -1297,7 +1347,6 @@ def cmd_guard_check(args) -> int:
 
 
 def cmd_guard_init(args) -> int:
-    """Read CLAUDE.md and propose a rules.yaml from it."""
     project_dir = args.project_dir or os.getcwd()
     claude_md = Path(project_dir) / "CLAUDE.md"
     rules_dir = Path(project_dir) / ".slipstream"
@@ -1364,12 +1413,11 @@ def cmd_guard_init(args) -> int:
 # Module 5 — Token coach, decision accelerator, warm-up
 # ---------------------------------------------------------------------------
 
-_AVG_TOKENS_PER_READ = 520  # typical file read in tokens (heuristic)
-_CACHE_READ_COST_RATIO = 0.10  # cache read costs ~10% of fresh read
+_AVG_TOKENS_PER_READ = 520
+_CACHE_READ_COST_RATIO = 0.10
 
 
 def _coach_analysis(conn: sqlite3.Connection, config: dict, days: int = 7) -> dict:
-    """Return ROI-ranked token-saving recommendations."""
     since = time.time() - days * 86400
     window = config.get("window_tokens", 1_000_000)
 
@@ -1424,7 +1472,6 @@ def _coach_analysis(conn: sqlite3.Connection, config: dict, days: int = 7) -> di
 
 
 def cmd_coach(args) -> int:
-    """Analyze token waste and print ROI-ranked recommendations."""
     try:
         conn = open_db(db_path())
     except Exception as e:
@@ -1450,7 +1497,7 @@ def cmd_coach(args) -> int:
     print(f"  Total spend    : {total:>12,} tokens")
     print(f"  Recoverable    : {waste:>12,} tokens  ({pct_save:.0f}% savings potential)")
     print()
-    print("  ── TOP TOKEN SINKS (re-read waste) ──────────────────────────")
+    print("  ── TOP TOKEN SINKS (re-read waste) ────────────────────────────")
     print()
 
     recs = analysis["recommendations"]
@@ -1471,7 +1518,6 @@ def cmd_coach(args) -> int:
 
 
 def cmd_optimize(args) -> int:
-    """Generate CLAUDE.md additions that pin hot files for cache efficiency."""
     try:
         conn = open_db(db_path())
     except Exception as e:
@@ -1528,7 +1574,6 @@ def cmd_optimize(args) -> int:
 
 
 def _haiku_decide(prompt: str, context: str) -> dict:
-    """Ask Haiku for a structured decision brief on a pending job."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         return {}
@@ -1576,7 +1621,6 @@ def _haiku_decide(prompt: str, context: str) -> dict:
 
 
 def cmd_decide(args) -> int:
-    """Surface Haiku-powered decision briefs for pending jobs."""
     try:
         conn = open_db(db_path())
     except Exception as e:
@@ -1627,7 +1671,6 @@ def cmd_decide(args) -> int:
 
 
 def cmd_warmup(args) -> int:
-    """SessionStart hook: print a warm-up context block for the new session."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -1647,7 +1690,6 @@ def cmd_warmup(args) -> int:
             "SELECT id, prompt, status, priority FROM jobs WHERE status IN ('pending_review','approved') ORDER BY priority DESC, created_at LIMIT 5"
         ).fetchall()
 
-        # Recent alerts for this project
         recent_alerts = conn.execute(
             """SELECT kind, severity, message FROM alerts
                WHERE ts >= ? ORDER BY ts DESC LIMIT 5""",
@@ -1696,7 +1738,6 @@ def cmd_warmup(args) -> int:
 # ---------------------------------------------------------------------------
 
 def _extract_first_user_intent(transcript_path: str) -> str:
-    """Return the first substantial user message from a transcript."""
     p = Path(transcript_path)
     if not p.exists():
         return ""
@@ -1726,7 +1767,6 @@ def _extract_first_user_intent(transcript_path: str) -> str:
 
 
 def _score_prompt(intent: str) -> dict:
-    """Score a prompt on specificity dimensions. Returns {score, suggestions}."""
     if not intent:
         return {"score": 0, "suggestions": []}
     suggestions = []
@@ -1761,7 +1801,6 @@ def _score_prompt(intent: str) -> dict:
 
 def _detect_spike(conn: sqlite3.Connection, session_id: str, usage: dict,
                   now: float, config: dict) -> str:
-    """Return alert message if current turn tokens are a spike vs session average."""
     this_turn = (usage.get("input_tokens", 0) + usage.get("output_tokens", 0) +
                  usage.get("cache_read_tokens", 0) + usage.get("cache_write_tokens", 0))
     if this_turn < 5000:
@@ -1785,7 +1824,6 @@ def _detect_spike(conn: sqlite3.Connection, session_id: str, usage: dict,
 
 
 def _detect_loop(conn: sqlite3.Connection, session_id: str) -> str:
-    """Return alert if last N tool calls show repeated identical patterns."""
     rows = conn.execute(
         """SELECT tool_name, file_paths FROM tool_uses
            WHERE session_id=? ORDER BY ts DESC LIMIT 15""",
@@ -1808,7 +1846,6 @@ def _detect_loop(conn: sqlite3.Connection, session_id: str) -> str:
 
 
 def _detect_drift(conn: sqlite3.Connection, session_id: str, now: float) -> str:
-    """Return alert if recent edits are unrelated to session intent."""
     intent_row = conn.execute(
         "SELECT intent FROM session_intents WHERE session_id=?", (session_id,)
     ).fetchone()
@@ -1860,7 +1897,6 @@ def _detect_drift(conn: sqlite3.Connection, session_id: str, now: float) -> str:
 
 
 def _check_stale_read(conn: sqlite3.Connection, session_id: str, fp: str, now: float) -> str:
-    """Return alert if file has changed on disk since last read in this session."""
     prev = conn.execute(
         """SELECT MAX(ts) as last_ts FROM tool_uses
            WHERE session_id=? AND file_paths LIKE ? AND tool_name='Read'""",
@@ -1883,7 +1919,6 @@ def _check_stale_read(conn: sqlite3.Connection, session_id: str, fp: str, now: f
 
 
 def _check_scope_creep(conn: sqlite3.Connection, session_id: str, fp: str) -> str:
-    """Return alert if edited file is outside the declared session scope."""
     intent_row = conn.execute(
         "SELECT intent FROM session_intents WHERE session_id=?", (session_id,)
     ).fetchone()
@@ -1921,7 +1956,6 @@ def _check_scope_creep(conn: sqlite3.Connection, session_id: str, fp: str) -> st
 # ---------------------------------------------------------------------------
 
 def cmd_handoff(args) -> int:
-    """Generate a session handoff document."""
     try:
         conn = open_db(db_path())
     except Exception as e:
@@ -2038,7 +2072,6 @@ def cmd_handoff(args) -> int:
 
 
 def cmd_why(args) -> int:
-    """Show decision log for a file."""
     target = getattr(args, "file", None)
     session_id = getattr(args, "session_id", None)
     try:
@@ -2076,7 +2109,6 @@ def cmd_why(args) -> int:
 
 
 def cmd_alerts(args) -> int:
-    """Show recent alerts."""
     try:
         conn = open_db(db_path())
     except Exception as e:
@@ -2116,7 +2148,6 @@ def cmd_alerts(args) -> int:
 
 
 def cmd_drift(args) -> int:
-    """Show drift analysis for current/specified session."""
     session_id = getattr(args, "session_id", None)
     try:
         conn = open_db(db_path())
@@ -2302,7 +2333,7 @@ def main():
     p_gi.add_argument("--project-dir", dest="project_dir", default=None)
     p_gi.add_argument("--force", action="store_true")
 
-    # Module 5 — coach / optimize / decide / warmup
+    # Module 5
     p_coach = sub.add_parser("coach")
     p_coach.add_argument("--days", type=int, default=7)
     p_coach.add_argument("--json", action="store_true")

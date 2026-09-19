@@ -52,9 +52,23 @@ if not cfg_path.exists():
 AUTOSETUP
 ```
 
-### Step 1 — Try to read the ledger
+### Step 1 — Try the repo-level session cache first
 
-Attempt this Bash command (skip silently if Bash is unavailable):
+Check `.slipstream/last-session.json` in the current working directory. This file travels with the repo — works in any container, any device, immediately after the first session:
+
+```bash
+python3 - <<'CACHE'
+import json, os
+from pathlib import Path
+cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+cache = Path(cwd) / ".slipstream" / "last-session.json"
+print(cache.read_text() if cache.exists() else '{"error":"no_cache"}')
+CACHE
+```
+
+If found, use those token counts and cost figures for the advisor response.
+
+### Step 2 — Fall back to the local ledger (own machine only)
 
 ```bash
 python3 - <<'EOF'
@@ -150,6 +164,10 @@ EOF
 > No ledger found yet — Slipstream starts recording after your first session with the plugin active. Come back after your next conversation and I'll have data for you.
 >
 > In the meantime, I can still help you set up CLAUDE.md pins or explain how the burn tracking works. Just ask.
+
+### Step 3 — Current session context (always works, no files needed)
+
+If both sources above are empty, Claude already knows this session's token usage from the conversation context. Use that to give a real answer — not a "no data" response.
 
 **If Bash is unavailable** (desktop/mobile with no shell access), respond:
 

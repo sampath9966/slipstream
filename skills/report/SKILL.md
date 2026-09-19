@@ -1,51 +1,56 @@
 ---
 name: report
-description: Show token burn and dollar cost for the current or recent sessions. Works in desktop, mobile, and CLI — no setup needed.
+description: Show token burn and dollar cost for this session. Works in desktop, mobile, any container — like /usage but deeper.
 ---
 
 # /slipstream:report
 
-Show the slipstream burn report with dollar costs. Works on every surface — no setup needed.
+Show the Slipstream burn report. Works on every surface, in every container, with no setup.
 
-## Zero-friction auto-setup
+## Execution order — read each source in turn, use the first one that has data
 
-Before running, silently ensure config exists. If missing, create it with defaults — **do not ask the user anything**:
+### Source 1 — Repo-level session cache (works in any container for this repo)
+
+Check for `.slipstream/last-session.json` in the current working directory. This file is written by the `Stop` hook after every session and travels with the repo — so any new container that opens the same repo has data immediately, no ledger needed.
 
 ```bash
-python3 - <<'AUTOSETUP'
-import json, os
+python3 - <<'EOF'
+import json, os, sys
 from pathlib import Path
 
-xdg = os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
-cfg_dir = Path(f"{xdg}/slipstream")
-cfg_dir.mkdir(parents=True, exist_ok=True)
-cfg_path = cfg_dir / "config.json"
-
-if not cfg_path.exists():
-    cfg_path.write_text(json.dumps({
-        "window_tokens": 1000000,
-        "warn_threshold_pct": 70,
-        "critical_threshold_pct": 90,
-        "plan": "pro",
-        "cost_per_mtok_input": 3.00,
-        "cost_per_mtok_output": 15.00,
-        "cost_per_mtok_cache_read": 0.30,
-        "cost_per_mtok_cache_write": 3.75
-    }, indent=2))
-AUTOSETUP
+cwd = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
+cache = Path(cwd) / ".slipstream" / "last-session.json"
+if cache.exists():
+    print(cache.read_text())
+else:
+    print(json.dumps({"error": "no_cache"}))
+EOF
 ```
 
-## How to run it
+If found, present it as:
 
-**Try the CLI first:**
+```
+Slipstream · last session · <model>
+──────────────────────────────────────────────────────
+  Input          :  XXX,XXX tokens
+  Output         :   XX,XXX tokens
+  Cache read     :  XXX,XXX tokens  ← cache saving you money
+  Cache write    :   XX,XXX tokens
+  Total          :  XXX,XXX tokens
 
-```bash
-slipstream report $ARGUMENTS
+  💰 Estimated session cost  :  $X.XXXX
+     (at $3.00/MTok input · $15.00/MTok output · $0.30/MTok cache-read)
+
+  Cache coverage : XX%  (tokens served from cache vs. total)
 ```
 
-If found, show output verbatim, then append the dollar cost section.
+Then offer: "Want the 7-day history? I can pull that too if your local ledger is available."
 
-**If CLI not found or Bash unavailable**, query inline:
+---
+
+### Source 2 — Local ledger (works on the user's own machine)
+
+If Source 1 has no data, query `~/.local/share/slipstream/ledger.db`:
 
 ```bash
 python3 - <<'EOF'
@@ -101,65 +106,43 @@ cr  = t.get("cache_read") or 0
 cw  = t.get("cache_write") or 0
 total_tok = t.get("total") or 0
 
-cost = (
-    inp / 1e6 * rates["input"] +
-    out / 1e6 * rates["output"] +
-    cr  / 1e6 * rates["cache_read"] +
-    cw  / 1e6 * rates["cache_write"]
-)
-cost_no_cache = (inp + cr) / 1e6 * rates["input"] + out / 1e6 * rates["output"] + cw / 1e6 * rates["cache_write"]
-cache_savings = cost_no_cache - cost
+cost = (inp/1e6*rates["input"] + out/1e6*rates["output"] +
+        cr/1e6*rates["cache_read"] + cw/1e6*rates["cache_write"])
 
 print(json.dumps({
-    "window": window, "days": days,
-    "totals": t,
+    "window": window, "days": days, "totals": t,
     "top_files": [dict(r) for r in top_files],
     "top_tools": [dict(r) for r in top_tools],
     "cost": round(cost, 4),
-    "cost_no_cache": round(cost_no_cache, 4),
-    "cache_savings": round(cache_savings, 4),
     "burn_pct": round(total_tok / window * 100, 1) if window else 0,
     "rates": rates,
 }))
 EOF
 ```
 
-## Output format
+Format as the full 7-day report with tool breakdown, file reads, and dollar cost.
 
-```
-Slipstream Burn Report · last 7 days · no telemetry · local only
-─────────────────────────────────────────────────────────────────
-  Total tokens   :    847,231  (84.7% of 1M window)
-  Input          :    512,400
-  Output         :     98,100
-  Cache read     :    220,000   ← already saving you money
-  Cache write    :     16,731
-  Sessions       :         12
+---
 
-  💰 Estimated cost this week  :  $X.XX
-     Without cache             :  $X.XX
-     Cache saved you           :  $X.XX  (~XX%)
+### Source 3 — Current session context (always works, everywhere, no files needed)
 
-  Tool calls (last 7d):
-    Read     312 calls
-    Bash     204 calls
-    Edit     156 calls
+If both sources above have no data, Claude already knows the current session's token count from the conversation context. Use it:
 
-  Most-read files:
-    ~/project/src/api/routes.py    28×
-    ~/project/src/db/models.py     21×
-```
-
-After the report, add one sentence: the top finding (e.g. "routes.py was re-read 28 times — pinning it to CLAUDE.md could save ~$0.04/week.").
-
-If cache savings > $0: "Your prompt cache is working — you're already paying X% less than you would without it."
-
-## No ledger yet
-
-> No data yet. Slipstream records usage starting from your next session.
+> **Slipstream · current session** (from conversation context)
 >
-> Quick tip while you wait: add your most-read files to CLAUDE.md — every re-read after the first will cost 90% less once tracking starts.
+> This session has used approximately **[X tokens]** so far.
+> At Claude Pro rates ($3.00/MTok input, $0.30/MTok cache-read):
+> **Estimated cost: ~$X.XX**
+>
+> *Note: This is the current session only. Historical data will appear here after your first full session with the Stop hook active.*
 
-## No shell (desktop/mobile)
+---
 
-> I can't reach the ledger from this surface. To see your report, open Claude Code CLI and type `/slipstream:report` — or ask me "estimate my token cost" and I'll walk you through it based on what we've done this session.
+### Source 4 — No data, no shell (mobile with no prior sessions)
+
+> No session data yet for this repo. Here's what Slipstream will track once a session completes:
+> - Tokens by type (input / output / cache read / cache write)
+> - Dollar cost per session
+> - Most-read files and their re-read waste
+>
+> All stored in `.slipstream/last-session.json` in this repo — available in any container, any device, next time you open it.

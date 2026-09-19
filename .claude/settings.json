@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PLUGIN_ROOT/../bin/slipstream\" install 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}

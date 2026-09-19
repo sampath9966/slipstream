@@ -1623,6 +1623,38 @@ def cmd_doctor(args) -> int:
     return 0 if ok else 1
 
 
+def cmd_install(args) -> int:
+    """Full local install: symlink skills + write statusLine into ~/.claude/settings.json."""
+    rc = cmd_install_skills(args)
+    if rc != 0:
+        return rc
+
+    engine = str(Path(__file__).resolve())
+    python = sys.executable
+    command = f"{python} {engine} statusline"
+
+    settings_path = Path.home() / ".claude" / "settings.json"
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        data = json.loads(settings_path.read_text()) if settings_path.exists() else {}
+    except Exception:
+        data = {}
+
+    existing = data.get("statusLine", {}).get("command", "")
+    if existing == command:
+        print("✓ statusLine already configured.")
+    else:
+        data.setdefault("statusLine", {})["command"] = command
+        settings_path.write_text(json.dumps(data, indent=2) + "\n")
+        print(f"✓ statusLine configured: {command}")
+        print("  The burn indicator will appear in Claude Code's status bar.")
+
+    print()
+    print("✓ slipstream install complete. Restart Claude Code to pick up the changes.")
+    return 0
+
+
 def cmd_install_skills(args) -> int:
     """Symlink slipstream skills into ~/.claude/skills/ so they appear in the / menu."""
     skills_src = Path(__file__).resolve().parent.parent / "skills"
@@ -1745,6 +1777,7 @@ def main():
 
     sub.add_parser("doctor")
     sub.add_parser("install-skills")
+    sub.add_parser("install")
 
     args = parser.parse_args()
 
@@ -1770,6 +1803,7 @@ def main():
         "warmup": cmd_warmup,
         "doctor": cmd_doctor,
         "install-skills": cmd_install_skills,
+        "install": cmd_install,
     }
 
     handler = dispatch.get(args.command)

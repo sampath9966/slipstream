@@ -573,7 +573,7 @@ def cmd_report(args) -> int:
     return 0
 
 
-_SUBBLOCK = " ▏▎▍▌▋▊▉█"  # 0..8 eighths for smooth bar rendering
+_SUBBLOCK = " ▏▎▍▌▋▊▉█"
 
 def _bar(pct: float, width: int = 8) -> str:
     """Smooth Unicode progress bar using eighth-block characters."""
@@ -766,7 +766,6 @@ def cmd_monitor(args) -> int:
 # ---------------------------------------------------------------------------
 
 def _haiku_rewrite(prompt: str) -> tuple[str, list]:
-    """Call Haiku to rewrite a prompt. Returns (rewritten, [change_notes])."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
         return prompt, []
@@ -813,7 +812,6 @@ def _haiku_rewrite(prompt: str) -> tuple[str, list]:
 
 
 def cmd_add(args) -> int:
-    """Enqueue a job. Calls Haiku pre-flight if ANTHROPIC_API_KEY is set."""
     prompt = args.prompt
     cwd = getattr(args, "cwd", None) or os.getcwd()
     files = getattr(args, "files", None) or []
@@ -855,7 +853,6 @@ def cmd_add(args) -> int:
 
 
 def cmd_approve(args) -> int:
-    """Batch-approve or reject pending prompt rewrites."""
     conn = open_db(db_path())
     pending = conn.execute(
         "SELECT * FROM jobs WHERE status='pending_review' ORDER BY created_at"
@@ -932,7 +929,6 @@ def cmd_queue_list(args) -> int:
 
 
 def cmd_dispatch(args) -> int:
-    """Dispatcher loop: runs approved jobs via 'claude -p', respecting pacing."""
     config = get_config()
     output_dir = data_dir() / "outputs"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1020,7 +1016,6 @@ def cmd_dispatch(args) -> int:
 
 
 def cmd_service(args) -> int:
-    """Install/uninstall/status the dispatcher as an OS service."""
     action = args.action
     engine = str(Path(__file__).resolve())
     dispatch_cmd = f"{engine} dispatch"
@@ -1161,7 +1156,6 @@ def _file_hash(path: str) -> str:
 
 
 def cmd_anchor_snapshot(args) -> int:
-    """PreCompact hook: write snapshot and print compact summary to stdout."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -1225,7 +1219,6 @@ def cmd_anchor_snapshot(args) -> int:
 
 
 def cmd_anchor_inject(args) -> int:
-    """PostCompact hook: re-inject the latest snapshot into the new context."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -1249,7 +1242,6 @@ def cmd_anchor_inject(args) -> int:
 
 
 def cmd_anchor(args) -> int:
-    """Inspect anchor snapshots for the current/specified session."""
     session_id = getattr(args, "session_id", None)
     conn = open_db(db_path())
 
@@ -1320,7 +1312,6 @@ def _matches_command(pattern: str, command: str) -> bool:
 
 
 def cmd_guard_check(args) -> int:
-    """PreToolUse hook: enforce rule guard on matching commands. Exit 2 to block."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -1400,7 +1391,6 @@ def cmd_guard_check(args) -> int:
 
 
 def cmd_guard_init(args) -> int:
-    """Read CLAUDE.md and propose a rules.yaml from it."""
     project_dir = args.project_dir or os.getcwd()
     claude_md = Path(project_dir) / "CLAUDE.md"
     rules_dir = Path(project_dir) / ".slipstream"
@@ -1472,7 +1462,6 @@ _CACHE_READ_COST_RATIO = 0.10
 
 
 def _coach_analysis(conn: sqlite3.Connection, config: dict, days: int = 7) -> dict:
-    """Return ROI-ranked token-saving recommendations."""
     since = time.time() - days * 86400
     window = config.get("window_tokens", 1_000_000)
 
@@ -1726,7 +1715,6 @@ def cmd_decide(args) -> int:
 
 
 def cmd_warmup(args) -> int:
-    """SessionStart hook: print a warm-up context block for the new session."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
@@ -2348,7 +2336,6 @@ def main():
                                      description="Session economics engine for Claude Code.")
     sub = parser.add_subparsers(dest="command")
 
-    # Module 1
     sub.add_parser("record")
     sub.add_parser("record-tool")
     p_rep = sub.add_parser("report")
@@ -2359,7 +2346,6 @@ def main():
     p_mon = sub.add_parser("monitor")
     p_mon.add_argument("--session-id", dest="session_id")
 
-    # Module 2
     p_add = sub.add_parser("add")
     p_add.add_argument("prompt")
     p_add.add_argument("--cwd")
@@ -2377,13 +2363,11 @@ def main():
     p_svc = sub.add_parser("service")
     p_svc.add_argument("action", choices=["install", "uninstall", "status"])
 
-    # Module 3
     sub.add_parser("anchor-snapshot")
     sub.add_parser("anchor-inject")
     p_anc = sub.add_parser("anchor")
     p_anc.add_argument("--session-id", dest="session_id")
 
-    # Module 4
     sub.add_parser("guard-check")
     p_guard = sub.add_parser("guard")
     p_guard_sub = p_guard.add_subparsers(dest="guard_action")
@@ -2391,7 +2375,6 @@ def main():
     p_gi.add_argument("--project-dir", dest="project_dir", default=None)
     p_gi.add_argument("--force", action="store_true")
 
-    # Module 5
     p_coach = sub.add_parser("coach")
     p_coach.add_argument("--days", type=int, default=7)
     p_coach.add_argument("--json", action="store_true")
@@ -2406,7 +2389,6 @@ def main():
     sub.add_parser("decide")
     sub.add_parser("warmup")
 
-    # Module 6
     p_handoff = sub.add_parser("handoff")
     p_handoff.add_argument("--session-id", dest="session_id")
     p_handoff.add_argument("--output", default=None)

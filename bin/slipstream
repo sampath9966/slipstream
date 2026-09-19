@@ -1233,7 +1233,7 @@ def cmd_guard_init(args) -> int:
 
           - name: no_secrets
             on: "git commit"
-            check: "! git diff --cached | grep -iE '^\\\\+.*(password|secret|api_key)\\\\s*=\\\\s*[\\"\\x27][^\\"\\x27]'"
+            check: "! git diff --cached | grep -iE '^\\\\+.*(password|secret|api_key)\\\\s*=\\\\s*[\\"\\x27][^\\"\'\\x27]'"
             message: "Possible secret in staged changes — verify before committing"
             enabled: "false"
 
@@ -1623,6 +1623,44 @@ def cmd_doctor(args) -> int:
     return 0 if ok else 1
 
 
+def cmd_install_skills(args) -> int:
+    """Symlink slipstream skills into ~/.claude/skills/ so they appear in the / menu."""
+    skills_src = Path(__file__).resolve().parent.parent / "skills"
+    skills_dst = Path.home() / ".claude" / "skills"
+    skills_dst.mkdir(parents=True, exist_ok=True)
+
+    if not skills_src.exists():
+        print(f"✗ Skills directory not found: {skills_src}")
+        return 1
+
+    installed = []
+    skipped = []
+    for skill_dir in sorted(skills_src.iterdir()):
+        if not skill_dir.is_dir() or not (skill_dir / "SKILL.md").exists():
+            continue
+        name = skill_dir.name
+        link = skills_dst / name
+        if link.is_symlink() and link.resolve() == skill_dir.resolve():
+            skipped.append(name)
+            continue
+        if link.exists() or link.is_symlink():
+            skipped.append(f"{name} (conflict — remove {link} manually)")
+            continue
+        link.symlink_to(skill_dir)
+        installed.append(name)
+
+    if installed:
+        print(f"✓ Installed skills: {', '.join(installed)}")
+        print("  They will appear when you type / in Claude Code (restart may be needed).")
+    if skipped:
+        for s in skipped:
+            if "conflict" in s:
+                print(f"⚠ Skipped {s}")
+    if not installed and not any("conflict" in s for s in skipped):
+        print("✓ All skills already installed.")
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Utilities
 # ---------------------------------------------------------------------------
@@ -1706,6 +1744,7 @@ def main():
     sub.add_parser("warmup")
 
     sub.add_parser("doctor")
+    sub.add_parser("install-skills")
 
     args = parser.parse_args()
 
@@ -1730,6 +1769,7 @@ def main():
         "decide": cmd_decide,
         "warmup": cmd_warmup,
         "doctor": cmd_doctor,
+        "install-skills": cmd_install_skills,
     }
 
     handler = dispatch.get(args.command)

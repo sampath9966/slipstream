@@ -1,201 +1,172 @@
 # Slipstream
 
-> **"67% of your tokens this week came from re-reading 11 files."**
+**Session economics for Claude Code.** Know what your tokens cost, which files burn them, and exactly when to start fresh — on any surface, with zero setup.
 
-A Claude Code plugin for session economics. Know where your tokens go, pace your work against the rolling window, survive compaction, and make CLAUDE.md rules actually stick.
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-orange.svg)](https://github.com/sampath9966/splitstream)
+[![No telemetry](https://img.shields.io/badge/telemetry-none-green.svg)](PRIVACY.md)
+[![Privacy](https://img.shields.io/badge/data-local%20only-brightgreen.svg)](PRIVACY.md)
 
-**No telemetry. Everything stays on your machine.** The ledger is SQLite at `~/.local/share/slipstream/ledger.db`. Nothing is ever uploaded or phoned home. This is a selling point, not a footnote.
+---
+
+> *"67% of your tokens this week came from re-reading 11 files. Pinning them to CLAUDE.md would save you $4.20/week."*
+
+---
+
+## Why Slipstream?
+
+`/usage` tells you how many tokens you spent. **Slipstream tells you what they cost, which files burned them, what you could have saved, and whether to keep going or start fresh.**
+
+| Without Slipstream | With Slipstream |
+|--------------------|-----------------|
+| Blind to cost until the bill arrives | Dollar cost per session, live |
+| No idea which files re-burn context | Top wasted files ranked by $/week |
+| Compaction wipes your working state | Anchor snapshot survives any reset |
+| Rules in CLAUDE.md get ignored | Guard enforces rules at tool-use time |
+| Context runs out mid-task | Advisor tells you when to wrap up |
+
+---
 
 ## Install
 
 ```
 /plugin marketplace add sampath9966/splitstream
-/plugin install slipstream
 ```
 
-Then configure your window size:
+That's it. Works immediately in Claude desktop, mobile, CLI, and remote containers. No terminal, no config, no flags required.
+
+---
+
+## Skills — works everywhere Claude runs
+
+Type any of these in Claude chat, on any surface:
+
+| Command | What it does |
+|---------|-------------|
+| `/slipstream:advisor` | Burn %, runway estimate, and a one-line recommendation |
+| `/slipstream:report` | Full session cost breakdown with cache savings |
+| `/slipstream:coach` | Re-read waste ranked by dollars/week, with inline fix |
+| `/slipstream:anchor` | Context snapshot before compaction — nothing lost |
+| `/slipstream:guard` | Enforce CLAUDE.md rules at tool-use time |
+| `/slipstream:queue` | Window-aware job queue with pacing governor |
+| `/slipstream:doctor` | Health check — hooks, ledger, config |
+| `/slipstream:setup` | First-run configuration |
+
+**All skills work on desktop, mobile, and CLI.** No shell access required — each skill falls back to inline Python or pure conversation automatically.
+
+---
+
+## What it looks like
 
 ```
-/slipstream:setup
+/slipstream:advisor
+
+Slipstream Advisor · this session
+──────────────────────────────────────────────────────
+  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░  71% of window used · ~2.1h left
+
+  Top waste this week
+  ├─ src/api/routes.py      28 reads · ~$1.84/week wasted → pin it
+  ├─ src/db/models.py       21 reads · ~$1.38/week wasted → pin it
+  └─ tests/conftest.py      19 reads · ~$1.25/week wasted → pin it
+
+  Recommendation
+  You're mid-window. Pin routes.py and models.py to CLAUDE.md now.
+  That one change recovers ~$3.22/week and extends your runway by ~18%.
+
+  Quick actions (no terminal needed)
+  · "Pin routes.py for me" → I'll update CLAUDE.md right now
+  · "Snapshot my context" → Anchor block ready to paste next session
+  · "Show full report" → Complete 7-day breakdown
 ```
 
-## What you get
-
-```
-$ /slipstream:report
-
-                    Slipstream Burn Report
-                last 7 days · no telemetry · local only
-──────────────────────────────────────────────────────────────
-  Total tokens   :      847,231  (84.7% of 1,000,000 window)
-  Input          :      512,400
-  Output         :       98,100
-  Cache read     :      220,000
-  Cache write    :       16,731
-  Sessions       :           12
-
-  ★  67% of file reads this period came from re-reading 11 files.
-
-  Tool calls (last 7d):
-    Read                            312 calls
-    Bash                            204 calls
-    Edit                            156 calls
-    Glob                             88 calls
-
-  Most-read files (last 7d):
-    ~/project/src/api/routes.py       28×
-    ~/project/src/db/models.py        21×
-    ~/project/tests/conftest.py       19×
-```
+---
 
 ## Modules
 
-| Module | Status | What it does |
-|--------|--------|--------------|
-| **ledger** | ✅ v0.1.0 | Token burn ledger — per turn, per tool, per file |
-| **queue** | ✅ v0.2.0 | Window-aware job queue with pacing governor |
-| **anchor** | ✅ v0.2.0 | Compaction snapshot — survive context resets |
-| **guard** | ✅ v0.2.0 | Enforce CLAUDE.md rules at tool-use time |
+| Module | What it does |
+|--------|-------------|
+| **Burn Ledger** | Per-turn, per-tool, per-file token tracking in local SQLite |
+| **Advisor** | Conversational burn report — works on desktop, mobile, CLI |
+| **Coach** | ROI-ranked waste analysis with inline CLAUDE.md fix |
+| **Anchor** | Compaction snapshot — re-injects context after any reset |
+| **Guard** | Declarative tool-use rules enforced before Claude acts |
+| **Queue** | Window-aware job queue with linear pacing governor |
 
-Each module is independently toggleable in plugin config.
+Each module is independently toggleable via plugin config.
 
-## Module 1 — Burn Ledger
+---
 
-Every turn and every tool use is recorded to SQLite. You get:
+## Data & privacy
 
-- Per-session, per-tool, and per-file breakdowns
-- The headline "X% of reads came from N files" number
-- A live in-session budget monitor (warns at 70% and 90% by default)
-- A statusline fragment: `▒ 71% ~2.3h left`
-- `slipstream report --json` for scripting
+**No telemetry. No network calls. Everything stays on your machine.**
 
-### Statusline
+- Burn ledger: `~/.local/share/slipstream/ledger.db` (SQLite, local only)
+- Session cache: `.slipstream/last-session.json` (travels with your repo)
+- Config: `~/.local/share/slipstream/config.json`
+- No conversation content is ever stored
 
-Add to your shell prompt or tmux status line:
+Full details: [PRIVACY.md](PRIVACY.md)
 
-```bash
-$(slipstream statusline)
-```
-
-Output: `▓ 91% ~0.4h left` (critical) / `▒ 71%` (warn) / `░ 43%` (normal)
-
-### Scripting
-
-```bash
-slipstream report --json --days 1 | jq '.totals.total'
-slipstream report --json | jq '.per_file[:5]'
-```
-
-## Module 2 — Window-Aware Queue
-
-Queue long-running prompts so they run when the window has budget. The pacing
-governor inserts delays as burn rises past the threshold, ramping linearly to
-`pacing_max_delay` at 100% burn.
-
-```bash
-slipstream queue add --prompt "Refactor auth module"
-slipstream queue list
-slipstream queue approve <job_id>
-slipstream queue dispatch            # respects pacing delay
-slipstream service install           # launchd (macOS) or systemd user unit (Linux)
-```
-
-Set `ANTHROPIC_API_KEY` to enable Haiku pre-flight (one-sentence cost estimate
-before each job is queued). Pre-flight is skipped silently if the key is absent.
-
-## Module 3 — Compaction Anchor
-
-Prevents loss of context across automatic compaction. The `PreCompact` hook
-snapshots key decisions and file hashes; the `PostCompact` hook re-injects a
-≤ 2 000-token anchor block so work resumes without missing state.
-
-```bash
-slipstream anchor snapshot --session-id <id> --transcript-path <path>
-slipstream anchor inject   --session-id <id>
-```
-
-## Module 4 — Rule Guard
-
-Declarative tool-use rules enforced at `PreToolUse`. Exit code 2 blocks the
-tool and surfaces the reason to Claude before it runs.
-
-```bash
-slipstream guard init       # generate rules.yaml from CLAUDE.md
-slipstream guard check      # called by PreToolUse hook automatically
-```
-
-Example `.slipstream/rules.yaml`:
-```yaml
-rules:
-  - name: no-force-push
-    match:
-      tool: Bash
-      command_contains: "push --force"
-    action: block
-    reason: "Force-push is not allowed. Use --force-with-lease or a PR."
-```
-
-See `skills/guard/SKILL.md` for full match-key and action reference.
+---
 
 ## Configuration
 
-Set via plugin `userConfig` or `~/.local/share/slipstream/config.json`:
+Zero-config by default. Override any setting:
 
 ```json
+// ~/.local/share/slipstream/config.json
 {
   "window_tokens": 1000000,
   "warn_threshold_pct": 70,
-  "critical_threshold_pct": 90
+  "critical_threshold_pct": 90,
+  "cost_per_mtok_input": 3.00,
+  "cost_per_mtok_output": 15.00,
+  "cost_per_mtok_cache_read": 0.30,
+  "cost_per_mtok_cache_write": 3.75
 }
 ```
 
-Export the path: `export SLIPSTREAM_CONFIG=~/.local/share/slipstream/config.json`
+Or set via plugin `userConfig` in Claude Code settings.
 
-Override DB path: `export SLIPSTREAM_DB=/path/to/ledger.db`
+---
 
-## Health check
-
-```
-/slipstream:doctor
-```
-
-or from a terminal:
+## CLI (optional, for power users)
 
 ```bash
+slipstream report --days 7
+slipstream report --json | jq '.per_file[:5]'
+slipstream queue add --prompt "Refactor auth module"
+slipstream anchor snapshot --session-id <id>
 slipstream doctor
 ```
 
-## Architecture
+---
+
+## How it works
 
 ```
-slipstream/
-├── .claude-plugin/plugin.json    # Plugin manifest
-├── .claude-plugin/marketplace.json
-├── hooks/hooks.json              # Stop/PostToolUse/PreCompact/PostCompact/PreToolUse
-├── skills/report/                # /slipstream:report
-├── skills/doctor/                # /slipstream:doctor
-├── skills/setup/                 # /slipstream:setup
-├── skills/queue/                 # /slipstream:queue
-├── skills/anchor/                # /slipstream:anchor
-├── skills/guard/                 # /slipstream:guard
-├── monitors/monitors.json        # In-session budget warnings
-├── bin/slipstream                # Engine (Python 3.11+, stdlib + sqlite3)
-├── .slipstream/rules.yaml        # Example guard rules
-└── tests/test_ledger.py          # Ledger math, parser, and pacing governor tests
+hooks/          Stop, PostToolUse, PreCompact, PostCompact, PreToolUse
+bin/slipstream  Engine — Python 3 stdlib only, no external packages
+skills/         Human interface — one SKILL.md per command
+.slipstream/    Repo-level cache and guard rules (travels with the repo)
 ```
 
-Design rule: **hooks do the capture, `bin/` does the work, skills are the human interface.** Hooks exit cleanly on any error — they never block or crash a session.
+**Design rule:** hooks capture, `bin/` processes, skills are the interface. Hooks exit cleanly on any error and never block a session.
 
-Token usage comes from parsing the transcript JSONL at `transcript_path` (provided by each `Stop` hook payload), not from the hook payload itself.
+---
 
 ## Development
 
 ```bash
 python3 -m pytest tests/ -v
 slipstream doctor
-slipstream report --days 1
 ```
+
+---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](LICENSE)
+
+Copyright 2026 sampath9966

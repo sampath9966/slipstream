@@ -48,6 +48,12 @@
       "description": "Maximum delay inserted between dispatched jobs at 100% burn.",
       "default": 300
     },
+    "haiku_model": {
+      "type": "string",
+      "title": "Haiku model ID",
+      "description": "Claude model used for queue pre-flight and decision briefs. Change only if you need to pin a specific dated version.",
+      "default": "claude-haiku-4-5"
+    },
     "modules": {
       "type": "object",
       "title": "Module toggles",

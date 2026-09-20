@@ -19,7 +19,7 @@ When jobs are queued with `slipstream queue add`, they accumulate in a review
 backlog. Without analysis, an engineer must re-read each prompt from scratch
 before approving or rejecting — typically 30–60 seconds per job.
 
-`slipstream decide` sends each pending job to `claude-haiku-4-5-20251001` and
+`slipstream decide` sends each pending job to Claude Haiku and
 gets back a structured 4-field brief:
 
 ```

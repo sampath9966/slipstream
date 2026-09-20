@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """slipstream engine — session economics for Claude Code.
 
-No telemetry. Everything stays on your machine.
+No telemetry. All data stays local; optional Anthropic API calls use your key.
 """
 
 import argparse
@@ -47,6 +47,7 @@ def get_config() -> dict:
         "window_tokens": 1_000_000,
         "pacing_threshold_pct": 60,
         "pacing_max_delay": 300,
+        "haiku_model": "claude-haiku-4-5",
         "modules": {"ledger": True, "queue": True, "anchor": True, "guard": True},
     }
     env_path = os.environ.get("SLIPSTREAM_CONFIG")
@@ -623,6 +624,7 @@ def _haiku_rewrite(prompt: str) -> tuple[str, list]:
     if not api_key:
         return prompt, []
 
+    model = get_config().get("haiku_model", "claude-haiku-4-5")
     system = textwrap.dedent("""
         You are a prompt quality gate for an automated Claude Code job queue.
         Given a task prompt, check for: vague scope, unresolved references (e.g. "the auth thing"),
@@ -638,7 +640,7 @@ def _haiku_rewrite(prompt: str) -> tuple[str, list]:
     """).strip()
 
     body = json.dumps({
-        "model": "claude-haiku-4-5-20251001",
+        "model": model,
         "max_tokens": 1024,
         "system": system,
         "messages": [{"role": "user", "content": f"Rewrite this task prompt:\n\n{prompt}"}],
@@ -1484,6 +1486,7 @@ def cmd_optimize(args) -> int:
 def _haiku_decide(prompt: str, context: str) -> dict:
     """Ask Haiku for a structured decision brief on a pending job."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    model = get_config().get("haiku_model", "claude-haiku-4-5")
     if not api_key:
         return {}
 
@@ -1504,7 +1507,7 @@ def _haiku_decide(prompt: str, context: str) -> dict:
         user_msg += f"\n\nContext:\n{context[:800]}"
 
     body = json.dumps({
-        "model": "claude-haiku-4-5-20251001",
+        "model": model,
         "max_tokens": 512,
         "system": system,
         "messages": [{"role": "user", "content": user_msg}],

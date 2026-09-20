@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Slipstream — Session economics for Claude Code</title>
+  <meta name="description" content="Know what your tokens cost, which files burn them, and exactly when to start fresh. Works on every Claude surface with zero setup.">
+  <meta property="og:title" content="Slipstream — Session economics for Claude Code">
+  <meta property="og:description" content="Know what your tokens cost, which files burn them, and exactly when to start fresh.">
+  <meta property="og:type" content="website">
+  <meta name="twitter:card" content="summary">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+  <style>
+    :root {
+      --bg: #0a0a0b;
+      --bg2: #111113;
+      --bg3: #1a1a1f;
+      --border: #2a2a35;
+      --text: #e8e8ed;
+      --muted: #8888a0;
+      --accent: #7c6af7;
+      --accent2: #a89cf7;
+      --green: #34d399;
+      --yellow: #fbbf24;
+      --red: #f87171;
+      --radius: 12px;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', system-ui, sans-serif;
+      font-size: 16px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* Nav */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 24px; height: 60px;
+      background: rgba(10,10,11,0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+    .nav-logo { font-weight: 700; font-size: 18px; letter-spacing: -0.5px; }
+    .nav-logo span { color: var(--accent); }
+    .nav-links { display: flex; gap: 24px; }
+    .nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; transition: color .2s; }
+    .nav-links a:hover { color: var(--text); }
+    .nav-cta {
+      background: var(--accent); color: #fff;
+      padding: 8px 18px; border-radius: 8px;
+      text-decoration: none; font-size: 14px; font-weight: 600;
+      transition: opacity .2s;
+    }
+    .nav-cta:hover { opacity: 0.85; }
+
+    /* Hero */
+    .hero {
+      max-width: 860px; margin: 0 auto;
+      padding: 100px 24px 80px;
+      text-align: center;
+    }
+    .badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--bg3); border: 1px solid var(--border);
+      padding: 6px 14px; border-radius: 100px;
+      font-size: 13px; color: var(--muted);
+      margin-bottom: 32px;
+    }
+    .badge-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    h1 {
+      font-size: clamp(36px, 6vw, 64px);
+      font-weight: 700; letter-spacing: -2px; line-height: 1.1;
+      margin-bottom: 24px;
+    }
+    h1 em { font-style: normal; color: var(--accent2); }
+    .hero-sub {
+      font-size: clamp(17px, 2.5vw, 20px);
+      color: var(--muted); max-width: 560px; margin: 0 auto 48px;
+    }
+    .hero-actions { display: flex; gap: 16px; justify-content: center; flex-wrap: wrap; }
+    .btn-primary {
+      background: var(--accent); color: #fff;
+      padding: 14px 28px; border-radius: 10px;
+      text-decoration: none; font-weight: 600; font-size: 16px;
+      transition: opacity .2s;
+    }
+    .btn-primary:hover { opacity: 0.85; }
+    .btn-secondary {
+      background: var(--bg3); color: var(--text);
+      border: 1px solid var(--border);
+      padding: 14px 28px; border-radius: 10px;
+      text-decoration: none; font-weight: 500; font-size: 16px;
+      transition: background .2s;
+    }
+    .btn-secondary:hover { background: var(--border); }
+
+    /* Terminal demo */
+    .demo {
+      max-width: 720px; margin: 0 auto 100px;
+      padding: 0 24px;
+    }
+    .terminal {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius); overflow: hidden;
+    }
+    .terminal-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 12px 16px; border-bottom: 1px solid var(--border);
+      background: var(--bg3);
+    }
+    .dot { width: 12px; height: 12px; border-radius: 50%; }
+    .dot-r { background: #ff5f57; }
+    .dot-y { background: #ffbd2e; }
+    .dot-g { background: #28ca41; }
+    .terminal-label { margin-left: 8px; font-size: 13px; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
+    .terminal-body { padding: 24px; font-family: 'JetBrains Mono', monospace; font-size: 14px; line-height: 1.8; }
+    .t-prompt { color: var(--accent); }
+    .t-cmd { color: var(--text); }
+    .t-divider { color: var(--border); }
+    .t-label { color: var(--muted); }
+    .t-val { color: var(--text); font-weight: 500; }
+    .t-green { color: var(--green); }
+    .t-yellow { color: var(--yellow); }
+    .t-red { color: var(--red); }
+    .t-accent { color: var(--accent2); }
+    .t-dim { color: var(--muted); }
+
+    /* Section */
+    section { max-width: 1080px; margin: 0 auto; padding: 80px 24px; }
+    .section-label {
+      font-size: 12px; font-weight: 600; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--accent);
+      margin-bottom: 16px;
+    }
+    h2 { font-size: clamp(28px, 4vw, 40px); font-weight: 700; letter-spacing: -1px; margin-bottom: 16px; }
+    .section-sub { font-size: 18px; color: var(--muted); max-width: 540px; margin-bottom: 56px; }
+
+    /* Skills grid */
+    .skills-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; }
+    .skill-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px;
+      transition: border-color .2s;
+    }
+    .skill-card:hover { border-color: var(--accent); }
+    .skill-cmd { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--accent2); margin-bottom: 10px; font-weight: 500; }
+    .skill-name { font-weight: 600; font-size: 16px; margin-bottom: 8px; }
+    .skill-desc { font-size: 14px; color: var(--muted); line-height: 1.5; }
+    .skill-tag {
+      display: inline-block; margin-top: 12px;
+      background: var(--bg3); border: 1px solid var(--border);
+      padding: 3px 10px; border-radius: 100px;
+      font-size: 12px; color: var(--muted);
+    }
+
+    /* Comparison */
+    .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    @media (max-width: 640px) { .compare-grid { grid-template-columns: 1fr; } }
+    .compare-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 28px;
+    }
+    .compare-card.after { border-color: var(--accent); }
+    .compare-title { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 20px; letter-spacing: 1px; text-transform: uppercase; }
+    .compare-card.after .compare-title { color: var(--accent); }
+    .compare-item { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; font-size: 14px; }
+    .compare-icon { flex-shrink: 0; margin-top: 2px; }
+
+    /* Privacy strip */
+    .privacy-strip {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 32px 36px;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 24px;
+    }
+    .privacy-left h3 { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+    .privacy-left p { color: var(--muted); font-size: 15px; max-width: 480px; }
+    .privacy-pills { display: flex; gap: 12px; flex-wrap: wrap; }
+    .pill {
+      display: flex; align-items: center; gap: 6px;
+      background: var(--bg3); border: 1px solid var(--border);
+      padding: 8px 16px; border-radius: 100px;
+      font-size: 13px; color: var(--text); font-weight: 500;
+    }
+    .pill-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px 24px;
+      max-width: 1080px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between;
+      flex-wrap: wrap; gap: 16px;
+    }
+    .footer-logo { font-weight: 700; font-size: 16px; }
+    .footer-logo span { color: var(--accent); }
+    .footer-links { display: flex; gap: 24px; }
+    .footer-links a { color: var(--muted); text-decoration: none; font-size: 14px; transition: color .2s; }
+    .footer-links a:hover { color: var(--text); }
+    .footer-copy { color: var(--muted); font-size: 13px; }
+
+    @media (max-width: 640px) {
+      .nav-links { display: none; }
+      .skills-grid { grid-template-columns: 1fr; }
+      footer { flex-direction: column; text-align: center; }
+      .footer-links { justify-content: center; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-logo">Slip<span>stream</span></div>
+  <div class="nav-links">
+    <a href="#skills">Skills</a>
+    <a href="#why">Why</a>
+    <a href="#privacy">Privacy</a>
+    <a href="https://github.com/sampath9966/slipstream">GitHub</a>
+  </div>
+  <a class="nav-cta" href="https://github.com/sampath9966/slipstream">Install →</a>
+</nav>
+
+<div class="hero">
+  <div class="badge">
+    <span class="badge-dot"></span>
+    No telemetry · local only · Apache 2.0
+  </div>
+  <h1>Session economics<br>for <em>Claude Code</em></h1>
+  <p class="hero-sub">
+    Know what your tokens cost, which files burn them, and exactly when to start fresh —
+    on any Claude surface, with zero setup.
+  </p>
+  <div class="hero-actions">
+    <a class="btn-primary" href="https://github.com/sampath9966/slipstream">Install plugin →</a>
+    <a class="btn-secondary" href="https://github.com/sampath9966/slipstream#readme">Read the docs</a>
+  </div>
+</div>
+
+<div class="demo">
+  <div class="terminal">
+    <div class="terminal-bar">
+      <div class="dot dot-r"></div>
+      <div class="dot dot-y"></div>
+      <div class="dot dot-g"></div>
+      <span class="terminal-label">/slipstream:advisor</span>
+    </div>
+    <div class="terminal-body">
+      <div><span class="t-prompt">→</span> <span class="t-cmd">/slipstream:advisor</span></div>
+      <div>&nbsp;</div>
+      <div><span class="t-accent">Slipstream Advisor</span> <span class="t-dim">· this session</span></div>
+      <div><span class="t-divider">──────────────────────────────────────────────</span></div>
+      <div><span class="t-yellow">▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░░</span>  <span class="t-val">71% used</span> <span class="t-dim">· ~2.1h left</span></div>
+      <div>&nbsp;</div>
+      <div><span class="t-label">  Top waste this week</span></div>
+      <div><span class="t-dim">  ├─</span> <span class="t-val">src/api/routes.py</span>     <span class="t-dim">28 reads · </span><span class="t-red">~$1.84/week</span> <span class="t-dim">→ pin it</span></div>
+      <div><span class="t-dim">  ├─</span> <span class="t-val">src/db/models.py</span>      <span class="t-dim">21 reads · </span><span class="t-red">~$1.38/week</span> <span class="t-dim">→ pin it</span></div>
+      <div><span class="t-dim">  └─</span> <span class="t-val">tests/conftest.py</span>     <span class="t-dim">19 reads · </span><span class="t-yellow">~$1.25/week</span> <span class="t-dim">→ pin it</span></div>
+      <div>&nbsp;</div>
+      <div><span class="t-label">  Recommendation</span></div>
+      <div><span class="t-dim">  Pin routes.py + models.py to CLAUDE.md now.</span></div>
+      <div><span class="t-green">  → Saves ~$3.22/week · extends runway ~18%</span></div>
+      <div>&nbsp;</div>
+      <div><span class="t-dim">  "Pin routes.py for me" → I'll update CLAUDE.md now</span></div>
+    </div>
+  </div>
+</div>
+
+<section id="skills">
+  <div class="section-label">Skills</div>
+  <h2>Works everywhere Claude runs</h2>
+  <p class="section-sub">Type any command in Claude chat. No terminal, no flags, no setup — every skill falls back gracefully on desktop and mobile.</p>
+  <div class="skills-grid">
+    <div class="skill-card">
+      <div class="skill-cmd">/slipstream:advisor</div>
+      <div class="skill-name">Advisor</div>
+      <div class="skill-desc">Burn %, runway estimate, and a one-line recommendation — keep going, pin a file, or wrap up and anchor.</div>
+      <span class="skill-tag">desktop · mobile · CLI</span>
+    </div>
+    <div class="skill-card">
+      <div class="skill-cmd">/slipstream:report</div>
+      <div class="skill-name">Report</div>
+      <div class="skill-desc">Full session cost breakdown: input, output, cache read/write, total dollars spent, cache savings.</div>
+      <span class="skill-tag">desktop · mobile · CLI</span>
+    </div>
+    <div class="skill-card">
+      <div class="skill-cmd">/slipstream:coach</div>
+      <div class="skill-name">Coach</div>
+      <div class="skill-desc">ROI-ranked waste analysis — which files cost the most per week in dollars, with an inline CLAUDE.md fix.</div>
+      <span class="skill-tag">desktop · mobile · CLI</span>
+    </div>
+    <div class="skill-card">
+      <div class="skill-cmd">/slipstream:anchor</div>
+      <div class="skill-name">Anchor</div>
+      <div class="skill-desc">Context snapshot before compaction. Re-injects key decisions and file state so work resumes without missing anything.</div>
+      <span class="skill-tag">desktop · mobile · CLI</span>
+    </div>
+    <div class="skill-card">
+      <div class="skill-cmd">/slipstream:guard</div>
+      <div class="skill-name">Guard</div>
+      <div class="skill-desc">Declarative tool-use rules enforced before Claude acts. Blocks force-pushes, unsafe commands, or custom patterns.</div>
+      <span class="skill-tag">CLI · container</span>
+    </div>
+    <div class="skill-card">
+      <div class="skill-cmd">/slipstream:queue</div>
+      <div class="skill-name">Queue</div>
+      <div class="skill-desc">Window-aware job queue with linear pacing governor. Holds long tasks until the window has budget.</div>
+      <span class="skill-tag">CLI · container</span>
+    </div>
+    <div class="skill-card">
+      <div class="skill-cmd">/slipstream:doctor</div>
+      <div class="skill-name">Doctor</div>
+      <div class="skill-desc">Health check — hooks, ledger, config, and database all verified in one command.</div>
+      <span class="skill-tag">desktop · mobile · CLI</span>
+    </div>
+    <div class="skill-card">
+      <div class="skill-cmd">/slipstream:setup</div>
+      <div class="skill-name">Setup</div>
+      <div class="skill-desc">First-run configuration. Asks three questions, writes your config. Works conversationally on mobile with no shell.</div>
+      <span class="skill-tag">desktop · mobile · CLI</span>
+    </div>
+  </div>
+</section>
+
+<section id="why">
+  <div class="section-label">Why Slipstream</div>
+  <h2>/usage tells you how many.<br>Slipstream tells you what it cost.</h2>
+  <p class="section-sub">The gap between knowing token counts and understanding session economics.</p>
+  <div class="compare-grid">
+    <div class="compare-card">
+      <div class="compare-title">Without Slipstream</div>
+      <div class="compare-item"><span class="compare-icon t-red">✗</span> Blind to cost until the bill arrives</div>
+      <div class="compare-item"><span class="compare-icon t-red">✗</span> No idea which files re-burn context</div>
+      <div class="compare-item"><span class="compare-icon t-red">✗</span> Compaction wipes your working state</div>
+      <div class="compare-item"><span class="compare-icon t-red">✗</span> CLAUDE.md rules get silently ignored</div>
+      <div class="compare-item"><span class="compare-icon t-red">✗</span> Context runs out mid-task</div>
+      <div class="compare-item"><span class="compare-icon t-red">✗</span> Doesn't work on desktop or mobile</div>
+    </div>
+    <div class="compare-card after">
+      <div class="compare-title">With Slipstream</div>
+      <div class="compare-item"><span class="compare-icon t-green">✓</span> Dollar cost per session, live</div>
+      <div class="compare-item"><span class="compare-icon t-green">✓</span> Top wasted files ranked by $/week</div>
+      <div class="compare-item"><span class="compare-icon t-green">✓</span> Anchor snapshot survives any reset</div>
+      <div class="compare-item"><span class="compare-icon t-green">✓</span> Guard enforces rules at tool-use time</div>
+      <div class="compare-item"><span class="compare-icon t-green">✓</span> Advisor tells you exactly when to wrap up</div>
+      <div class="compare-item"><span class="compare-icon t-green">✓</span> Every skill works on every surface</div>
+    </div>
+  </div>
+</section>
+
+<section id="privacy">
+  <div class="privacy-strip">
+    <div class="privacy-left">
+      <h3>No telemetry. Ever.</h3>
+      <p>Every byte Slipstream writes stays on your machine. No analytics, no crash reporting, no update checks, no network access of any kind. The ledger is SQLite under your home directory — yours to read, export, or delete at any time.</p>
+    </div>
+    <div class="privacy-pills">
+      <div class="pill"><span class="pill-dot"></span> Local only</div>
+      <div class="pill"><span class="pill-dot"></span> No network calls</div>
+      <div class="pill"><span class="pill-dot"></span> GDPR safe</div>
+      <div class="pill"><span class="pill-dot"></span> Apache 2.0</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="footer-logo">Slip<span>stream</span></div>
+  <div class="footer-links">
+    <a href="https://github.com/sampath9966/slipstream">GitHub</a>
+    <a href="https://github.com/sampath9966/slipstream/blob/main/PRIVACY.md">Privacy</a>
+    <a href="https://github.com/sampath9966/slipstream/blob/main/SECURITY.md">Security</a>
+    <a href="https://github.com/sampath9966/slipstream/blob/main/CHANGELOG.md">Changelog</a>
+    <a href="https://github.com/sampath9966/slipstream/blob/main/LICENSE">License</a>
+  </div>
+  <div class="footer-copy">© 2026 sampath9966 · Apache 2.0</div>
+</footer>
+
+</body>
+</html>

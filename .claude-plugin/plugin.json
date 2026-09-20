@@ -5,11 +5,11 @@
   "version": "0.2.0",
   "author": {
     "name": "sampath9966",
-    "url": "https://github.com/sampath9966/splitstream"
+    "url": "https://github.com/sampath9966/slipstream"
   },
-  "homepage": "https://github.com/sampath9966/splitstream",
-  "repository": "https://github.com/sampath9966/splitstream",
-  "license": "MIT",
+  "homepage": "https://sampath9966.github.io/slipstream",
+  "repository": "https://github.com/sampath9966/slipstream",
+  "license": "Apache-2.0",
   "keywords": ["token-usage", "burn-ledger", "context-management", "productivity"],
   "defaultEnabled": true,
   "skills": "../skills/",

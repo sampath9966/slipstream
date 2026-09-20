@@ -1,3 +1,8 @@
+---
+name: guard
+description: Manage tool-use rules — view, add, or test guard rules that block unsafe commands. Works in desktop, mobile, and CLI.
+---
+
 # /slipstream:guard
 
 Manage the rule guard (Module 4).
@@ -65,7 +70,7 @@ rules:
 ### Actions
 
 | Action | Behaviour |
-|--------|-----------|
+|--------|----------|
 | `block` | Exit 2 — Claude Code surfaces the reason and does not run the tool |
 | `warn`  | Log the violation; tool still runs |
 

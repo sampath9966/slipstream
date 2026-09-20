@@ -308,6 +308,73 @@ def cmd_record(args) -> int:
         conn.close()
     except Exception:
         pass
+
+    # Write repo-level session cache so any container opening this repo has data.
+    # Stored at <cwd>/.slipstream/last-session.json — travels with the repo.
+    if cwd:
+        try:
+            cache_dir = Path(cwd) / ".slipstream"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            cache_path = cache_dir / "last-session.json"
+
+            # Accumulate into existing cache if present (same session)
+            existing = {}
+            if cache_path.exists():
+                try:
+                    existing = json.loads(cache_path.read_text())
+                except Exception:
+                    pass
+
+            prev_input = existing.get("input_tokens", 0) if existing.get("session_id") == session_id else 0
+            prev_output = existing.get("output_tokens", 0) if existing.get("session_id") == session_id else 0
+            prev_cr = existing.get("cache_read_tokens", 0) if existing.get("session_id") == session_id else 0
+            prev_cw = existing.get("cache_write_tokens", 0) if existing.get("session_id") == session_id else 0
+
+            inp = usage.get("input_tokens", 0)
+            out = usage.get("output_tokens", 0)
+            cr  = usage.get("cache_read_tokens", 0)
+            cw  = usage.get("cache_write_tokens", 0)
+
+            rates = {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 3.75}
+            cfg_env = os.environ.get("SLIPSTREAM_CONFIG")
+            if cfg_env and Path(cfg_env).exists():
+                try:
+                    cfg = json.loads(Path(cfg_env).read_text())
+                    rates["input"] = cfg.get("cost_per_mtok_input", rates["input"])
+                    rates["output"] = cfg.get("cost_per_mtok_output", rates["output"])
+                    rates["cache_read"] = cfg.get("cost_per_mtok_cache_read", rates["cache_read"])
+                    rates["cache_write"] = cfg.get("cost_per_mtok_cache_write", rates["cache_write"])
+                except Exception:
+                    pass
+
+            total_inp = prev_input + inp
+            total_out = prev_output + out
+            total_cr  = prev_cr + cr
+            total_cw  = prev_cw + cw
+            total_tok = total_inp + total_out + total_cr + total_cw
+
+            cost = (
+                total_inp / 1e6 * rates["input"] +
+                total_out / 1e6 * rates["output"] +
+                total_cr  / 1e6 * rates["cache_read"] +
+                total_cw  / 1e6 * rates["cache_write"]
+            )
+
+            cache_path.write_text(json.dumps({
+                "session_id": session_id,
+                "ts": time.time(),
+                "model": usage.get("model"),
+                "input_tokens": total_inp,
+                "output_tokens": total_out,
+                "cache_read_tokens": total_cr,
+                "cache_write_tokens": total_cw,
+                "total_tokens": total_tok,
+                "estimated_cost_usd": round(cost, 4),
+                "rates": rates,
+            }, indent=2))
+        except Exception:
+            pass
+
     return 0
 
 

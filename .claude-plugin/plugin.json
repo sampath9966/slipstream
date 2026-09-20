@@ -9,7 +9,7 @@
   },
   "homepage": "https://github.com/sampath9966/splitstream",
   "repository": "https://github.com/sampath9966/splitstream",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "keywords": ["token-usage", "burn-ledger", "context-management", "productivity"],
   "defaultEnabled": true,
   "skills": "../skills/",

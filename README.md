@@ -99,12 +99,13 @@ Each module is independently toggleable via plugin config.
 
 ## Data & privacy
 
-**No telemetry. No network calls. Everything stays on your machine.**
+**No telemetry. All data stays local.**
 
-- Burn ledger: `~/.local/share/slipstream/ledger.db` (SQLite, local only)
+- Burn ledger: `~/.local/share/slipstream/ledger.db` (SQLite, local)
 - Session cache: `.slipstream/last-session.json` (travels with your repo)
 - Config: `~/.local/share/slipstream/config.json`
 - No conversation content is ever stored
+- The `queue add` / `decide` commands optionally call the Anthropic API (requires `ANTHROPIC_API_KEY`); no other outbound connections are made
 
 Full details: [PRIVACY.md](PRIVACY.md)
 
@@ -123,9 +124,12 @@ Zero-config by default. Override any setting:
   "cost_per_mtok_input": 3.00,
   "cost_per_mtok_output": 15.00,
   "cost_per_mtok_cache_read": 0.30,
-  "cost_per_mtok_cache_write": 3.75
+  "cost_per_mtok_cache_write": 3.75,
+  "haiku_model": "claude-haiku-4-5"
 }
 ```
+
+To enable `queue add` / `decide` AI analysis, set `ANTHROPIC_API_KEY` in your environment.
 
 Or set via plugin `userConfig` in Claude Code settings.
 

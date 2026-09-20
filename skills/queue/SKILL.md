@@ -60,6 +60,6 @@ Configure in `~/.slipstream/config.json`:
 ## Haiku pre-flight
 
 Before a job is queued, `slipstream queue add` sends the prompt to
-`claude-haiku-4-5-20251001` for a one-sentence summary and cost estimate.
+`Claude Haiku` for a one-sentence summary and cost estimate.
 Set `ANTHROPIC_API_KEY` in your environment; if unset, the pre-flight is skipped
 and the raw prompt is stored as-is.

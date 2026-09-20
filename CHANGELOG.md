@@ -6,6 +6,21 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.2.1] — 2026-09-20
+
+### Added
+- **`CLAUDE.md`** — codebase conventions, architecture invariants, testing guide, and design rules for contributors and Claude Code sessions working in this repo
+- **`haiku_model` config key** — replaces hardcoded dated model ID (`claude-haiku-4-5-20251001`) in `queue add` and `decide`; defaults to the stable undated alias `claude-haiku-4-5`; exposed as a `userConfig` field in `plugin.json` so users can pin a specific version via Claude Code plugin settings
+- **Plugin userConfig resolution** — `get_config()` now checks `$CLAUDE_PLUGIN_ROOT/../config.json` (plugin data dir written by Claude Code's settings UI) before falling back to the XDG user config; userConfig changes made via the Claude Code UI now take effect without any additional setup
+- **`ANTHROPIC_API_KEY` visibility in doctor** — `slipstream doctor` now shows whether the API key is set and the configured `haiku_model`, so users can verify the full stack without guessing
+
+### Fixed
+- Removed inaccurate "no network calls / everything stays on your machine" claims from `bin/slipstream` output strings, `README.md`, `SECURITY.md`, `PRIVACY.md`, `skills/onboard/SKILL.md`, and `marketplace.json` description — the `queue add` and `decide` commands do call the Anthropic API when `ANTHROPIC_API_KEY` is set
+- `marketplace.json` version was `1.0`/`0.1.0`, now tracks `plugin.json` (`0.2.1`)
+- `bin/slipstream` executable bit now committed to the repo
+
+---
+
 ## [0.2.0] — 2026-09-19
 
 ### Added

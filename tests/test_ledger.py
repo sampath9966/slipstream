@@ -385,3 +385,57 @@ class TestLoadRules:
         assert ss._matches_command("push --force", "git push --force origin main") is True
         assert ss._matches_command("push --force", "git push origin main") is False
         assert ss._matches_command("PUSH --FORCE", "git push --force origin main") is True
+
+
+class TestGetConfig:
+    def test_defaults_returned_when_no_file(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SLIPSTREAM_CONFIG", raising=False)
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        cfg = ss.get_config()
+        assert cfg["haiku_model"] == "claude-haiku-4-5"
+        assert cfg["warn_threshold_pct"] == 70
+        assert cfg["window_tokens"] == 1_000_000
+
+    def test_haiku_model_overridden_by_config_file(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SLIPSTREAM_CONFIG", raising=False)
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        cfg_dir = tmp_path / "slipstream"
+        cfg_dir.mkdir()
+        (cfg_dir / "config.json").write_text(json.dumps({"haiku_model": "claude-haiku-4-5-20251001"}))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        cfg = ss.get_config()
+        assert cfg["haiku_model"] == "claude-haiku-4-5-20251001"
+
+    def test_slipstream_config_env_takes_priority(self, tmp_path, monkeypatch):
+        env_cfg = tmp_path / "custom.json"
+        env_cfg.write_text(json.dumps({"haiku_model": "custom-model", "window_tokens": 500000}))
+        xdg_cfg_dir = tmp_path / "slipstream"
+        xdg_cfg_dir.mkdir()
+        (xdg_cfg_dir / "config.json").write_text(json.dumps({"haiku_model": "wrong-model"}))
+        monkeypatch.setenv("SLIPSTREAM_CONFIG", str(env_cfg))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        cfg = ss.get_config()
+        assert cfg["haiku_model"] == "custom-model"
+        assert cfg["window_tokens"] == 500000
+
+    def test_plugin_root_config_read(self, tmp_path, monkeypatch):
+        plugin_dir = tmp_path / "plugins" / "slipstream"
+        plugin_dir.mkdir(parents=True)
+        plugin_data_dir = tmp_path / "plugins"
+        (plugin_data_dir / "config.json").write_text(json.dumps({"window_tokens": 5_000_000}))
+        monkeypatch.delenv("SLIPSTREAM_CONFIG", raising=False)
+        monkeypatch.setenv("CLAUDE_PLUGIN_ROOT", str(plugin_dir))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+        cfg = ss.get_config()
+        assert cfg["window_tokens"] == 5_000_000
+
+    def test_malformed_config_falls_through_to_defaults(self, tmp_path, monkeypatch):
+        env_cfg = tmp_path / "bad.json"
+        env_cfg.write_text("{ not valid json }")
+        monkeypatch.setenv("SLIPSTREAM_CONFIG", str(env_cfg))
+        monkeypatch.delenv("CLAUDE_PLUGIN_ROOT", raising=False)
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+        cfg = ss.get_config()
+        assert cfg["haiku_model"] == "claude-haiku-4-5"

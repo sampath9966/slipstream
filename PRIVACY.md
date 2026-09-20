@@ -71,7 +71,7 @@ There are no:
 - License validation calls
 - Update checks that phone home
 
-Network access is never initiated by Slipstream. The plugin has no network dependency.
+Slipstream makes no telemetry or tracking network calls. The only optional outbound connection is the Anthropic API (`queue add` / `decide` commands), which runs only when `ANTHROPIC_API_KEY` is explicitly set in the environment — the user is the one providing the key and controlling when it is used. No other network access is initiated.
 
 ---
 

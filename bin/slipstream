@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """slipstream engine — session economics for Claude Code.
 
-No telemetry. Everything stays on your machine.
+No telemetry. All data stays local; optional Anthropic API calls use your key.
 """
 
 import argparse
@@ -47,15 +47,27 @@ def get_config() -> dict:
         "window_tokens": 1_000_000,
         "pacing_threshold_pct": 60,
         "pacing_max_delay": 300,
+        "haiku_model": "claude-haiku-4-5",
         "modules": {"ledger": True, "queue": True, "anchor": True, "guard": True},
     }
+    # Resolution order: SLIPSTREAM_CONFIG env → plugin data dir config → user config dir
+    candidates = []
     env_path = os.environ.get("SLIPSTREAM_CONFIG")
-    if env_path and Path(env_path).exists():
-        try:
-            with open(env_path) as f:
-                return {**defaults, **json.load(f)}
-        except Exception:
-            pass
+    if env_path:
+        candidates.append(Path(env_path))
+    plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
+    if plugin_root:
+        candidates.append(Path(plugin_root).parent / "config.json")
+    xdg = os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
+    candidates.append(Path(xdg) / "slipstream" / "config.json")
+
+    for p in candidates:
+        if p.exists():
+            try:
+                with open(p) as f:
+                    return {**defaults, **json.load(f)}
+            except Exception:
+                pass
     return defaults
 
 
@@ -501,7 +513,7 @@ def cmd_report(args) -> int:
 
     bar = "─" * 62
     print(f"\n{'Slipstream Burn Report':^62}")
-    print(f"{'last ' + str(days) + ' days · no telemetry · local only':^62}")
+    print(f"{'last ' + str(days) + ' days · no telemetry · data stays local':^62}")
     print(bar)
     pct = (total_tokens / window * 100) if window > 0 else 0
     print(f"  Total tokens   : {total_tokens:>12,}  ({pct:.1f}% of {window:,} window)")
@@ -623,6 +635,7 @@ def _haiku_rewrite(prompt: str) -> tuple[str, list]:
     if not api_key:
         return prompt, []
 
+    model = get_config().get("haiku_model", "claude-haiku-4-5")
     system = textwrap.dedent("""
         You are a prompt quality gate for an automated Claude Code job queue.
         Given a task prompt, check for: vague scope, unresolved references (e.g. "the auth thing"),
@@ -638,7 +651,7 @@ def _haiku_rewrite(prompt: str) -> tuple[str, list]:
     """).strip()
 
     body = json.dumps({
-        "model": "claude-haiku-4-5-20251001",
+        "model": model,
         "max_tokens": 1024,
         "system": system,
         "messages": [{"role": "user", "content": f"Rewrite this task prompt:\n\n{prompt}"}],
@@ -1396,7 +1409,7 @@ def cmd_coach(args) -> int:
 
     bar = "─" * 62
     print(f"\n{'Slipstream Token Coach':^62}")
-    print(f"{'last ' + str(days) + ' days · no telemetry · local only':^62}")
+    print(f"{'last ' + str(days) + ' days · no telemetry · data stays local':^62}")
     print(bar)
     total = analysis["total_tokens"]
     waste = analysis["total_waste_tokens"]
@@ -1484,6 +1497,7 @@ def cmd_optimize(args) -> int:
 def _haiku_decide(prompt: str, context: str) -> dict:
     """Ask Haiku for a structured decision brief on a pending job."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    model = get_config().get("haiku_model", "claude-haiku-4-5")
     if not api_key:
         return {}
 
@@ -1504,7 +1518,7 @@ def _haiku_decide(prompt: str, context: str) -> dict:
         user_msg += f"\n\nContext:\n{context[:800]}"
 
     body = json.dumps({
-        "model": "claude-haiku-4-5-20251001",
+        "model": model,
         "max_tokens": 512,
         "system": system,
         "messages": [{"role": "user", "content": user_msg}],
@@ -1554,7 +1568,7 @@ def cmd_decide(args) -> int:
 
     bar = "─" * 62
     print(f"\n{'Slipstream Decision Brief':^62}")
-    print(f"{'powered by Claude Haiku · no data leaves your machine':^62}")
+    print(f"{'powered by Claude Haiku · prompts sent to Anthropic API only':^62}")
     print(bar)
 
     for job in jobs:
@@ -1657,6 +1671,9 @@ def cmd_doctor(args) -> int:
           f"warn={config['warn_threshold_pct']}%, "
           f"critical={config['critical_threshold_pct']}%, "
           f"pacing threshold={config['pacing_threshold_pct']}%")
+    print(f"  Haiku model: {config['haiku_model']}")
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    print(f"  ANTHROPIC_API_KEY: {'set (' + str(len(api_key)) + ' chars)' if api_key else 'not set (queue/decide will skip AI analysis)'}")
 
     plugin_root = os.environ.get("CLAUDE_PLUGIN_ROOT")
     print(f"  CLAUDE_PLUGIN_ROOT: {plugin_root or '(not set — run inside Claude Code)'}")

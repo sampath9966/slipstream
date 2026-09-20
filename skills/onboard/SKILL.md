@@ -73,7 +73,7 @@ EOF
 >
 > Your token usage will be recorded automatically in the background. After your next session, try `/slipstream:report` to see where your tokens went, or `/slipstream:coach` to get dollar savings recommendations.
 >
-> Everything stays on your machine. Nothing is ever uploaded.
+> All data stays local — no telemetry, no tracking. The optional `/slipstream:decide` and `/slipstream:queue` commands call the Anthropic API only when `ANTHROPIC_API_KEY` is set.
 
 **If already had data (returning user or re-install):**
 

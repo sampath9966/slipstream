@@ -30,7 +30,7 @@ Include:
 
 ## Scope
 
-Slipstream runs entirely locally with no network access. The meaningful attack surface is:
+Slipstream runs primarily locally. The `queue add` and `decide` commands optionally call the Anthropic API when `ANTHROPIC_API_KEY` is set in the environment — no other outbound connections are made. The meaningful attack surface is:
 
 | Area | Notes |
 |------|-------|
@@ -44,7 +44,7 @@ Out of scope: issues in Python stdlib, SQLite, or Claude Code itself (report tho
 
 ## Security design principles
 
-- **No network access** — Slipstream never initiates outbound connections
+- **Minimal network access** — only `queue add` / `decide` call the Anthropic API, and only when `ANTHROPIC_API_KEY` is set; no other outbound connections are ever made
 - **No eval or exec on external input** — all rule matching uses string comparison, not code execution
 - **Hooks exit cleanly on errors** — no hook blocks or crashes a Claude session on unexpected input
 - **Files written with default OS permissions** — no world-writable paths created

@@ -3,7 +3,7 @@
 **Session economics for Claude Code.** Know what your tokens cost, which files burn them, and exactly when to start fresh — on any surface, with zero setup.
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-orange.svg)](https://github.com/sampath9966/splitstream)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-plugin-orange.svg)](https://github.com/sampath9966/slipstream)
 [![No telemetry](https://img.shields.io/badge/telemetry-none-green.svg)](PRIVACY.md)
 [![Privacy](https://img.shields.io/badge/data-local%20only-brightgreen.svg)](PRIVACY.md)
 
@@ -30,7 +30,7 @@
 ## Install
 
 ```
-/plugin marketplace add sampath9966/splitstream
+/plugin marketplace add sampath9966/slipstream
 ```
 
 That's it. Works immediately in Claude desktop, mobile, CLI, and remote containers. No terminal, no config, no flags required.

@@ -154,5 +154,5 @@ Changes will be committed to this file in the public repository with a dated cha
 Questions about this policy:
 
 - **Email:** sampath@vmwareadmin.in
-- **GitHub Issues:** https://github.com/sampath9966/splitstream/issues
-- **Repository:** https://github.com/sampath9966/splitstream
+- **GitHub Issues:** https://github.com/sampath9966/slipstream/issues
+- **Repository:** https://github.com/sampath9966/slipstream

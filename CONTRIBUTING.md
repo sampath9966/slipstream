@@ -10,8 +10,8 @@
 ## Dev setup
 
 ```bash
-git clone https://github.com/sampath9966/splitstream
-cd splitstream
+git clone https://github.com/sampath9966/slipstream
+cd slipstream
 python3 -m pytest tests/ -v
 slipstream doctor
 ```

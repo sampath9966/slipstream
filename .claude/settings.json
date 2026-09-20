@@ -2,7 +2,7 @@
   "plugins": [
     {
       "type": "github",
-      "repo": "sampath9966/splitstream",
+      "repo": "sampath9966/slipstream",
       "ref": "main"
     }
   ]

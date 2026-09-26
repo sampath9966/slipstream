@@ -10,12 +10,15 @@
   "homepage": "https://sampath9966.github.io/slipstream",
   "repository": "https://github.com/sampath9966/slipstream",
   "license": "Apache-2.0",
-  "keywords": ["token-usage", "burn-ledger", "context-management", "productivity"],
+  "keywords": [
+    "token-usage",
+    "burn-ledger",
+    "context-management",
+    "productivity"
+  ],
   "defaultEnabled": true,
-  "skills": "../skills/",
-  "hooks": "../hooks/hooks.json",
   "experimental": {
-    "monitors": "../monitors/monitors.json"
+    "monitors": "./monitors/monitors.json"
   },
   "userConfig": {
     "warn_threshold_pct": {
@@ -48,16 +51,29 @@
       "description": "Maximum delay inserted between dispatched jobs at 100% burn.",
       "default": 300
     },
-    "modules": {
-      "type": "object",
-      "title": "Module toggles",
-      "description": "Enable or disable individual modules.",
-      "default": {
-        "ledger": true,
-        "queue": true,
-        "anchor": true,
-        "guard": true
-      }
+    "module_ledger": {
+      "type": "boolean",
+      "title": "Enable burn ledger",
+      "description": "Turn the burn ledger module on or off.",
+      "default": true
+    },
+    "module_queue": {
+      "type": "boolean",
+      "title": "Enable window-aware queue",
+      "description": "Turn the window-aware queue module on or off.",
+      "default": true
+    },
+    "module_anchor": {
+      "type": "boolean",
+      "title": "Enable compaction anchor",
+      "description": "Turn the compaction anchor module on or off.",
+      "default": true
+    },
+    "module_guard": {
+      "type": "boolean",
+      "title": "Enable rule guard",
+      "description": "Turn the rule guard module on or off.",
+      "default": true
     }
   }
 }

@@ -106,7 +106,7 @@ Each module is independently toggleable via plugin config.
 
 ## Data & privacy
 
-**No telemetry. No network calls. Everything stays on your machine.**
+**No telemetry. Everything stays on your machine.** The only network call is optional: if you set `ANTHROPIC_API_KEY`, queue pre-flight (`add`) and `decide` send that job's prompt to the Anthropic API with your key. See [PRIVACY.md](PRIVACY.md).
 
 - Burn ledger: `~/.local/share/slipstream/ledger.db` (SQLite, local only)
 - Session cache: `.slipstream/last-session.json` (travels with your repo)

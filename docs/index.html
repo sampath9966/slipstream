@@ -8,7 +8,13 @@
   <meta property="og:title" content="Slipstream — Session economics for Claude Code">
   <meta property="og:description" content="Know what your tokens cost, which files burn them, and exactly when to start fresh.">
   <meta property="og:type" content="website">
+  <meta property="og:url" content="https://sampath9966.github.io/slipstream/">
+  <meta property="og:image" content="https://sampath9966.github.io/slipstream/assets/icon.png">
   <meta name="twitter:card" content="summary">
+  <meta name="theme-color" content="#0a0a0b">
+  <link rel="icon" type="image/svg+xml" href="assets/icon.svg">
+  <link rel="apple-touch-icon" href="assets/icon-180.png">
+  <link rel="canonical" href="https://sampath9966.github.io/slipstream/">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
   <style>
@@ -47,7 +53,9 @@
       border-bottom: 1px solid var(--border);
     }
     .nav-logo { font-weight: 700; font-size: 18px; letter-spacing: -0.5px; }
-    .nav-logo span { color: var(--accent); }
+    .nav-logo { display: flex; align-items: center; gap: 8px; }
+    .nav-logo img { border-radius: 6px; }
+    .nav-logo span { color: var(--accent); margin-left: -8px; }
     .nav-links { display: flex; gap: 24px; }
     .nav-links a { color: var(--muted); text-decoration: none; font-size: 14px; transition: color .2s; }
     .nav-links a:hover { color: var(--text); }
@@ -159,6 +167,36 @@
       font-size: 12px; color: var(--muted);
     }
 
+    /* Install */
+    .install-steps { display: grid; grid-template-columns: 1fr; gap: 16px; max-width: 720px; }
+    .install-step {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 20px; min-width: 0;
+      display: flex; flex-direction: column; gap: 10px;
+    }
+    .install-head { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+    .install-num { font-weight: 600; color: var(--accent2); }
+    .code-row {
+      display: flex; align-items: center; gap: 8px;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px 10px 10px 14px;
+    }
+    .code-row code {
+      flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap;
+      font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text);
+    }
+    .copy {
+      flex-shrink: 0; background: var(--bg3); color: var(--muted);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 4px 10px; font: 500 12px 'Inter', sans-serif; cursor: pointer;
+    }
+    .copy:hover, .copy:focus-visible { color: var(--text); border-color: var(--accent); outline: none; }
+    @media (max-width: 640px) { .code-row code { white-space: normal; overflow-wrap: anywhere; } }
+    .install-note { margin-top: 16px; color: var(--muted); font-size: 14px; }
+    .install-note code, .privacy-fine code { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--accent2); }
+    .privacy-fine { margin-top: 10px; font-size: 13px !important; }
+    .privacy-fine a { color: var(--accent2); }
+
     /* Comparison */
     .compare-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
     @media (max-width: 640px) { .compare-grid { grid-template-columns: 1fr; } }
@@ -200,7 +238,7 @@
     }
     .footer-logo { font-weight: 700; font-size: 16px; }
     .footer-logo span { color: var(--accent); }
-    .footer-links { display: flex; gap: 24px; }
+    .footer-links { display: flex; gap: 12px 24px; flex-wrap: wrap; }
     .footer-links a { color: var(--muted); text-decoration: none; font-size: 14px; transition: color .2s; }
     .footer-links a:hover { color: var(--text); }
     .footer-copy { color: var(--muted); font-size: 13px; }
@@ -216,14 +254,15 @@
 <body>
 
 <nav>
-  <div class="nav-logo">Slip<span>stream</span></div>
+  <div class="nav-logo"><img src="assets/icon.svg" alt="" width="22" height="22">Slip<span>stream</span></div>
   <div class="nav-links">
+    <a href="#install">Install</a>
     <a href="#skills">Skills</a>
     <a href="#why">Why</a>
     <a href="#privacy">Privacy</a>
     <a href="https://github.com/sampath9966/slipstream">GitHub</a>
   </div>
-  <a class="nav-cta" href="https://github.com/sampath9966/slipstream">Install →</a>
+  <a class="nav-cta" href="#install">Install →</a>
 </nav>
 
 <div class="hero">
@@ -237,7 +276,7 @@
     on any Claude surface, with zero setup.
   </p>
   <div class="hero-actions">
-    <a class="btn-primary" href="https://github.com/sampath9966/slipstream">Install plugin →</a>
+    <a class="btn-primary" href="#install">Install plugin →</a>
     <a class="btn-secondary" href="https://github.com/sampath9966/slipstream#readme">Read the docs</a>
   </div>
 </div>
@@ -270,6 +309,24 @@
     </div>
   </div>
 </div>
+
+<section id="install">
+  <div class="section-label">Install</div>
+  <h2>One command. No setup.</h2>
+  <p class="section-sub" style="margin-bottom:32px">Run this in Claude Code. Slipstream starts recording on your next turn.</p>
+  <div class="install-steps">
+    <div class="install-step">
+      <div class="install-head"><span class="install-num">Claude Code 2.1.275+</span><span class="t-dim">one step</span></div>
+      <div class="code-row"><code>/plugin install slipstream --marketplace sampath9966/slipstream</code><button class="copy" type="button">Copy</button></div>
+    </div>
+    <div class="install-step">
+      <div class="install-head"><span class="install-num">Earlier versions</span><span class="t-dim">two steps</span></div>
+      <div class="code-row"><code>/plugin marketplace add sampath9966/slipstream</code><button class="copy" type="button">Copy</button></div>
+      <div class="code-row"><code>/plugin install slipstream@slipstream</code><button class="copy" type="button">Copy</button></div>
+    </div>
+  </div>
+  <p class="install-note">Then try <code>/slipstream:advisor</code>. Requires Python 3 (standard library only).</p>
+</section>
 
 <section id="skills">
   <div class="section-label">Skills</div>
@@ -357,11 +414,12 @@
   <div class="privacy-strip">
     <div class="privacy-left">
       <h3>No telemetry. Ever.</h3>
-      <p>Every byte Slipstream writes stays on your machine. No analytics, no crash reporting, no update checks, no network access of any kind. The ledger is SQLite under your home directory — yours to read, export, or delete at any time.</p>
+      <p>Every byte Slipstream writes stays on your machine. No analytics, no crash reporting, no update checks, nothing sent to us or any third party. The ledger is SQLite under your home directory — yours to read, export, or delete at any time.</p>
+      <p class="privacy-fine">One opt-in exception: if you set <code>ANTHROPIC_API_KEY</code>, queue pre-flight and <code>decide</code> send that job’s prompt to the Anthropic API with your own key. <a href="https://github.com/sampath9966/slipstream/blob/main/PRIVACY.md">Details</a></p>
     </div>
     <div class="privacy-pills">
       <div class="pill"><span class="pill-dot"></span> Local only</div>
-      <div class="pill"><span class="pill-dot"></span> No network calls</div>
+      <div class="pill"><span class="pill-dot"></span> No third parties</div>
       <div class="pill"><span class="pill-dot"></span> GDPR safe</div>
       <div class="pill"><span class="pill-dot"></span> Apache 2.0</div>
     </div>
@@ -380,5 +438,15 @@
   <div class="footer-copy">© 2026 sampath9966 · Apache 2.0</div>
 </footer>
 
+<script>
+  document.querySelectorAll('.copy').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const text = btn.previousElementSibling.textContent;
+      try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied'; }
+      catch (e) { btn.textContent = 'Select & copy'; }
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1600);
+    });
+  });
+</script>
 </body>
 </html>

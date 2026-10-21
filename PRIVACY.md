@@ -61,7 +61,7 @@ Written during first-run setup. Contains user-configured thresholds (e.g. warn a
 
 ## 4. Data transmission
 
-**Slipstream transmits no data to any external service, server, API, or third party — ever.**
+**Slipstream sends no telemetry and contacts no service run by its author or any third party.**
 
 There are no:
 - Analytics endpoints
@@ -71,7 +71,14 @@ There are no:
 - License validation calls
 - Update checks that phone home
 
-Network access is never initiated by Slipstream. The plugin has no network dependency.
+### The one optional exception: Anthropic API, with your own key
+
+If — and only if — the `ANTHROPIC_API_KEY` environment variable is set, two queue features call the Anthropic Messages API (`https://api.anthropic.com/v1/messages`) using **your** key:
+
+- `slipstream add` (queue a job) sends the job's prompt text so a fast model can tighten it before it runs.
+- `slipstream decide` sends a pending job's prompt (and up to 800 characters of context you pass) to produce a short decision brief.
+
+Nothing else is sent: no ledger contents, no file contents, no identifiers. The request goes directly from your machine to Anthropic under your own account and is governed by Anthropic's terms. Unset `ANTHROPIC_API_KEY` and these features fall back to local-only behaviour; every other Slipstream feature never touches the network.
 
 ---
 
@@ -128,7 +135,7 @@ Users in the European Economic Area, United Kingdom, California, and other regul
 ## 9. Third-party dependencies
 
 Slipstream's runtime dependencies are:
-- **Python 3 standard library** (`sqlite3`, `json`, `pathlib`, `subprocess`) — included with Python; no network access
+- **Python 3 standard library** (`sqlite3`, `json`, `pathlib`, `subprocess`, `urllib`) — included with Python; `urllib` is used only for the optional Anthropic API calls described in section 4
 - **No external packages** are required or fetched at runtime
 
 ---

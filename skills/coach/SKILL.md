@@ -38,7 +38,7 @@ AUTOSETUP
 **Try the CLI first:**
 
 ```bash
-slipstream coach $ARGUMENTS
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" coach $ARGUMENTS
 ```
 
 If found, show output verbatim, then append the dollar savings section below.

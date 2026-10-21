@@ -23,13 +23,13 @@ Claude Code to show the block reason to the assistant before the tool runs.
 
 ```bash
 # Check a tool call against rules (called automatically by PreToolUse hook)
-slipstream guard check --tool-name <name> --tool-input-json '<json>'
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" guard check --tool-name <name> --tool-input-json '<json>'
 
 # Generate rules.yaml from CLAUDE.md constraints
-slipstream guard init
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" guard init
 
 # Show loaded rules
-slipstream guard show
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" guard show
 ```
 
 ## rules.yaml format

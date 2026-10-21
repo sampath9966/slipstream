@@ -20,7 +20,7 @@ Or say: "Snapshot my context" / "Save my progress before compaction"
 **Try the CLI first:**
 
 ```bash
-slipstream anchor $ARGUMENTS
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" anchor $ARGUMENTS
 ```
 
 **If the CLI is not found or Bash is unavailable** (desktop/mobile), produce the anchor inline:
@@ -55,13 +55,13 @@ Tell the user: "Paste this block at the start of your next session's first messa
 
 ```bash
 # Snapshot current session
-slipstream anchor snapshot --session-id <id> --transcript-path <path>
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" anchor snapshot --session-id <id> --transcript-path <path>
 
 # Re-inject after compaction
-slipstream anchor inject --session-id <id>
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" anchor inject --session-id <id>
 
 # Show saved anchor
-slipstream anchor show --session-id <id>
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" anchor show --session-id <id>
 ```
 
 ## What the anchor block is used for

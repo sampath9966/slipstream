@@ -6,6 +6,19 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [0.2.1] — 2026-10-21
+
+### Changed
+- Engine moved from `bin/slipstream` to `scripts/slipstream.py` and invoked as `python3 scripts/slipstream.py` from hooks, the monitor and skills. claude.ai-hosted plugins may not ship a top-level `bin/`, and this no longer depends on the file's execute bit.
+
+### Fixed
+- Privacy docs now disclose the opt-in Anthropic API call made by queue `add` and `decide` when `ANTHROPIC_API_KEY` is set.
+
+### Added
+- Plugin icon and project homepage at https://sampath9966.github.io/slipstream/
+
+---
+
 ## [0.2.0] — 2026-09-19
 
 ### Added

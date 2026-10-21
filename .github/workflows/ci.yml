@@ -17,6 +17,5 @@ jobs:
       - run: python3 -m pytest tests/ -v
       - name: Smoke-test engine
         run: |
-          chmod +x bin/slipstream
-          bin/slipstream doctor
-          bin/slipstream report --json
+          python3 scripts/slipstream.py doctor
+          python3 scripts/slipstream.py report --json

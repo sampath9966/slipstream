@@ -38,7 +38,7 @@ Slipstream runs entirely locally with no network access. The meaningful attack s
 | **SQLite ledger** | World-readable by default — report if a code path creates it with unsafe permissions |
 | **Hook exit codes** | A hook returning exit code 2 blocks a Claude tool call — report if this can be triggered by crafted input |
 | **`.slipstream/rules.yaml`** | Rule files are read from the repo; report if a crafted rule file can escape intended scope |
-| **`bin/slipstream` CLI** | Report command injection, path traversal, or privilege escalation |
+| **`scripts/slipstream.py` engine** | Report command injection, path traversal, or privilege escalation |
 
 Out of scope: issues in Python stdlib, SQLite, or Claude Code itself (report those to Anthropic).
 

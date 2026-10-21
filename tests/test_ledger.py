@@ -12,8 +12,8 @@ import importlib.machinery
 
 import pytest
 
-# Load bin/slipstream (no .py extension) as a module
-_engine_path = str(Path(__file__).parent.parent / "bin" / "slipstream")
+# Load scripts/slipstream.py as a module
+_engine_path = str(Path(__file__).parent.parent / "scripts" / "slipstream.py")
 _loader = importlib.machinery.SourceFileLoader("slipstream", _engine_path)
 _spec = importlib.util.spec_from_loader("slipstream", _loader)
 ss = importlib.util.module_from_spec(_spec)

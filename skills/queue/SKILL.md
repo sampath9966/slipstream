@@ -26,20 +26,20 @@ Invoked automatically or by the user to inspect and control pending jobs.
 
 ```bash
 # Add a job to the queue
-slipstream queue add --prompt "Refactor auth module" [--priority high]
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" queue add --prompt "Refactor auth module" [--priority high]
 
 # List pending jobs
-slipstream queue list
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" queue list
 
 # Approve jobs for dispatch
-slipstream queue approve <job_id> [<job_id> ...]
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" queue approve <job_id> [<job_id> ...]
 
 # Dispatch approved jobs (respects pacing delay)
-slipstream queue dispatch
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" queue dispatch
 
 # Install / uninstall OS background service
-slipstream service install
-slipstream service uninstall
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" service install
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" service uninstall
 ```
 
 ## Pacing governor

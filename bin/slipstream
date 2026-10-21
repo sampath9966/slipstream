@@ -40,23 +40,64 @@ def data_dir() -> Path:
     return db_path().parent
 
 
+def config_path() -> Path:
+    env = os.environ.get("SLIPSTREAM_CONFIG")
+    if env:
+        return Path(env)
+    return data_dir() / "config.json"
+
+
+_NUMERIC_KEYS = (
+    "warn_threshold_pct", "critical_threshold_pct", "window_tokens",
+    "pacing_threshold_pct", "pacing_max_delay",
+    "cost_per_mtok_input", "cost_per_mtok_output",
+    "cost_per_mtok_cache_read", "cost_per_mtok_cache_write",
+)
+_MODULES = ("ledger", "queue", "anchor", "guard")
+
+
 def get_config() -> dict:
-    defaults = {
+    """Merge defaults < config.json (or $SLIPSTREAM_CONFIG) < plugin userConfig env."""
+    config = {
         "warn_threshold_pct": 70,
         "critical_threshold_pct": 90,
         "window_tokens": 1_000_000,
         "pacing_threshold_pct": 60,
         "pacing_max_delay": 300,
-        "modules": {"ledger": True, "queue": True, "anchor": True, "guard": True},
+        "cost_per_mtok_input": 3.00,
+        "cost_per_mtok_output": 15.00,
+        "cost_per_mtok_cache_read": 0.30,
+        "cost_per_mtok_cache_write": 3.75,
+        "modules": {m: True for m in _MODULES},
     }
-    env_path = os.environ.get("SLIPSTREAM_CONFIG")
-    if env_path and Path(env_path).exists():
+    path = config_path()
+    if path.exists():
         try:
-            with open(env_path) as f:
-                return {**defaults, **json.load(f)}
+            data = json.loads(path.read_text())
+            if isinstance(data, dict):
+                modules = {**config["modules"], **(data.get("modules") or {})}
+                config.update(data)
+                config["modules"] = modules
         except Exception:
             pass
-    return defaults
+
+    # Plugin userConfig values are exported as CLAUDE_PLUGIN_OPTION_<KEY>.
+    for key in _NUMERIC_KEYS:
+        val = os.environ.get(f"CLAUDE_PLUGIN_OPTION_{key.upper()}")
+        if val:
+            try:
+                config[key] = float(val) if "." in val else int(val)
+            except ValueError:
+                pass
+    for m in _MODULES:
+        val = os.environ.get(f"CLAUDE_PLUGIN_OPTION_MODULE_{m.upper()}")
+        if val:
+            config["modules"][m] = val.strip().lower() not in ("false", "0", "no", "off")
+    return config
+
+
+def module_enabled(config: dict, name: str) -> bool:
+    return bool((config.get("modules") or {}).get(name, True))
 
 
 # ---------------------------------------------------------------------------
@@ -151,13 +192,33 @@ def _migrate(conn: sqlite3.Connection) -> None:
 # Transcript parsing
 # ---------------------------------------------------------------------------
 
+def _is_prompt_line(obj: dict) -> bool:
+    """True for a user message typed by the person (not a tool_result echo)."""
+    if obj.get("role") == "user":
+        return True
+    if obj.get("type") != "user" or obj.get("isSidechain"):
+        return False
+    content = (obj.get("message") or {}).get("content")
+    if isinstance(content, list):
+        return not any(isinstance(c, dict) and c.get("type") == "tool_result" for c in content)
+    return True
+
+
 def parse_transcript(path: str) -> dict:
-    """Return token usage from the last assistant turn in a JSONL transcript."""
+    """Return summed token usage for the latest turn in a JSONL transcript.
+
+    A turn is every API call since the last user prompt. Claude Code writes
+    one line per content block, all repeating the same message id and usage,
+    so usage is counted once per message id.
+    """
     p = Path(path)
     if not p.exists():
         return {}
 
-    usage = {}
+    keys = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
+    totals = {k: 0 for k in keys}
+    seen_ids: set = set()
+    found = False
     model = None
     try:
         with open(p) as f:
@@ -171,32 +232,46 @@ def parse_transcript(path: str) -> dict:
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(obj, dict):
+                continue
 
-            if obj.get("role") == "assistant" and "usage" in obj:
-                usage = _extract_usage(obj["usage"])
-                model = obj.get("model")
-                break
-
-            if obj.get("type") == "assistant":
-                msg = obj.get("message", {})
-                if "usage" in msg:
-                    usage = _extract_usage(msg["usage"])
-                    model = msg.get("model")
+            if _is_prompt_line(obj):
+                if found:
                     break
+                continue
 
-            if "usage" in obj and isinstance(obj.get("usage"), dict):
-                u = obj["usage"]
-                if any(k in u for k in ("input_tokens", "output_tokens")):
-                    usage = _extract_usage(u)
-                    model = obj.get("model")
-                    break
+            u, msg_id, msg_model = None, None, None
+            if obj.get("type") == "assistant" and isinstance(obj.get("message"), dict):
+                if obj.get("isSidechain"):
+                    continue
+                msg = obj["message"]
+                u, msg_id, msg_model = msg.get("usage"), msg.get("id"), msg.get("model")
+            elif isinstance(obj.get("usage"), dict):
+                u, msg_id, msg_model = obj["usage"], obj.get("id"), obj.get("model")
+                if obj.get("role") != "assistant" and not any(
+                        k in u for k in ("input_tokens", "output_tokens")):
+                    u = None
+
+            if not isinstance(u, dict):
+                continue
+            if msg_id:
+                if msg_id in seen_ids:
+                    continue
+                seen_ids.add(msg_id)
+            for k, v in _extract_usage(u).items():
+                totals[k] += v
+            found = True
+            if model is None and msg_model:
+                model = msg_model
 
     except Exception:
         pass
 
+    if not found:
+        return {}
     if model:
-        usage["model"] = model
-    return usage
+        totals["model"] = model
+    return totals
 
 
 def read_transcript_text(path: str, max_lines: int = 200) -> str:
@@ -214,8 +289,9 @@ def read_transcript_text(path: str, max_lines: int = 200) -> str:
                 continue
             try:
                 obj = json.loads(line)
-                role = obj.get("role") or obj.get("type", "")
-                content = obj.get("content") or ""
+                msg = obj.get("message") if isinstance(obj.get("message"), dict) else {}
+                role = obj.get("role") or msg.get("role") or obj.get("type", "")
+                content = obj.get("content") or msg.get("content") or ""
                 if isinstance(content, list):
                     parts = [c.get("text", "") for c in content if isinstance(c, dict)]
                     content = " ".join(parts)
@@ -287,6 +363,10 @@ def cmd_record(args) -> int:
     transcript_path = payload.get("transcript_path", "")
     cwd = payload.get("cwd", "")
 
+    config = get_config()
+    if not module_enabled(config, "ledger"):
+        return 0
+
     usage = parse_transcript(transcript_path)
     if not usage:
         return 0
@@ -316,6 +396,10 @@ def cmd_record(args) -> int:
             cache_dir = Path(cwd) / ".slipstream"
             cache_dir.mkdir(parents=True, exist_ok=True)
             cache_path = cache_dir / "last-session.json"
+            # Keep the per-machine cache out of the user's commits.
+            ignore_path = cache_dir / ".gitignore"
+            if not ignore_path.exists():
+                ignore_path.write_text("last-session.json\n")
 
             # Accumulate into existing cache if present (same session)
             existing = {}
@@ -335,17 +419,8 @@ def cmd_record(args) -> int:
             cr  = usage.get("cache_read_tokens", 0)
             cw  = usage.get("cache_write_tokens", 0)
 
-            rates = {"input": 3.00, "output": 15.00, "cache_read": 0.30, "cache_write": 3.75}
-            cfg_env = os.environ.get("SLIPSTREAM_CONFIG")
-            if cfg_env and Path(cfg_env).exists():
-                try:
-                    cfg = json.loads(Path(cfg_env).read_text())
-                    rates["input"] = cfg.get("cost_per_mtok_input", rates["input"])
-                    rates["output"] = cfg.get("cost_per_mtok_output", rates["output"])
-                    rates["cache_read"] = cfg.get("cost_per_mtok_cache_read", rates["cache_read"])
-                    rates["cache_write"] = cfg.get("cost_per_mtok_cache_write", rates["cache_write"])
-                except Exception:
-                    pass
+            rates = {k: config[f"cost_per_mtok_{k}"]
+                     for k in ("input", "output", "cache_read", "cache_write")}
 
             total_inp = prev_input + inp
             total_out = prev_output + out
@@ -384,6 +459,9 @@ def cmd_record_tool(args) -> int:
     except Exception:
         return 0
 
+    if not module_enabled(get_config(), "ledger"):
+        return 0
+
     session_id = payload.get("session_id", "unknown")
     prompt_id = payload.get("prompt_id")
     tool_name = payload.get("tool_name", "unknown")
@@ -406,7 +484,7 @@ def cmd_record_tool(args) -> int:
 
 def _extract_file_paths(tool_name: str, tool_input: dict) -> list:
     paths = []
-    for key in ("file_path", "path"):
+    for key in ("file_path", "path", "notebook_path"):
         if key in tool_input and isinstance(tool_input[key], str):
             paths.append(tool_input[key])
     if "edits" in tool_input and isinstance(tool_input["edits"], list):
@@ -512,9 +590,10 @@ def cmd_report(args) -> int:
     print(f"  Sessions       : {totals['sessions'] or 0:>12,}")
     print()
 
-    if file_counts_sorted and total_tokens > 0:
-        top_n = min(11, len(file_counts_sorted))
-        top_reads = sum(c for _, c in file_counts_sorted[:top_n])
+    reread = [(p, c) for p, c in file_counts_sorted if c > 1]
+    if reread and total_tokens > 0:
+        top_n = min(11, len(reread))
+        top_reads = sum(c for _, c in reread[:top_n])
         all_reads = sum(c for _, c in file_counts_sorted)
         if all_reads > 0:
             pct_files = top_reads / all_reads * 100
@@ -617,12 +696,47 @@ def cmd_monitor(args) -> int:
 # Module 2 — queue
 # ---------------------------------------------------------------------------
 
-def _haiku_rewrite(prompt: str) -> tuple[str, list]:
-    """Call Haiku to rewrite a prompt. Returns (rewritten, [change_notes])."""
+HAIKU_MODEL = "claude-haiku-5-5"
+
+
+def _haiku_json(system: str, user_msg: str, max_tokens: int, timeout: int) -> dict:
+    """Ask Haiku for a JSON object. Returns {} without an API key or on any error."""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        return prompt, []
+        return {}
 
+    body = json.dumps({
+        "model": HAIKU_MODEL,
+        "max_tokens": max_tokens,
+        "system": system,
+        "messages": [{"role": "user", "content": user_msg}],
+    }).encode()
+
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages",
+        data=body,
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read())
+        text = "".join(b.get("text", "") for b in data.get("content", [])
+                       if b.get("type") == "text").strip()
+        # Tolerate a ```json fenced reply.
+        text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text)
+        result = json.loads(text)
+        return result if isinstance(result, dict) else {}
+    except Exception:
+        return {}
+
+
+def _haiku_rewrite(prompt: str) -> tuple[str, list]:
+    """Call Haiku to rewrite a prompt. Returns (rewritten, [change_notes])."""
     system = textwrap.dedent("""
         You are a prompt quality gate for an automated Claude Code job queue.
         Given a task prompt, check for: vague scope, unresolved references (e.g. "the auth thing"),
@@ -637,31 +751,12 @@ def _haiku_rewrite(prompt: str) -> tuple[str, list]:
         If no changes needed, return the original prompt and empty changes array.
     """).strip()
 
-    body = json.dumps({
-        "model": "claude-haiku-4-5-20251001",
-        "max_tokens": 1024,
-        "system": system,
-        "messages": [{"role": "user", "content": f"Rewrite this task prompt:\n\n{prompt}"}],
-    }).encode()
-
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=body,
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-        text = data["content"][0]["text"].strip()
-        result = json.loads(text)
-        return result.get("rewritten", prompt), result.get("changes", [])
-    except Exception:
+    result = _haiku_json(system, f"Rewrite this task prompt:\n\n{prompt}", 1024, 30)
+    changes = result.get("changes") or []
+    rewritten = result.get("rewritten") or prompt
+    if not isinstance(changes, list) or not isinstance(rewritten, str):
         return prompt, []
+    return rewritten, changes
 
 
 def cmd_add(args) -> int:
@@ -835,7 +930,7 @@ def cmd_dispatch(args) -> int:
                 try:
                     files = json.loads(job["files"])
                     if files:
-                        cmd += ["--files"] + files
+                        cmd[2] = prompt + "\n\nRelevant files:\n" + "\n".join(f"- {f}" for f in files)
                 except Exception:
                     pass
 
@@ -1020,6 +1115,9 @@ def cmd_anchor_snapshot(args) -> int:
     except Exception:
         return 0
 
+    if not module_enabled(get_config(), "anchor"):
+        return 0
+
     session_id = payload.get("session_id", "unknown")
     transcript_path = payload.get("transcript_path", "")
     cwd = payload.get("cwd", "")
@@ -1078,10 +1176,13 @@ def cmd_anchor_snapshot(args) -> int:
 
 
 def cmd_anchor_inject(args) -> int:
-    """PostCompact hook: re-inject the latest snapshot into the new context."""
+    """SessionStart(compact) hook: re-inject the latest snapshot into the new context."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
+        return 0
+
+    if not module_enabled(get_config(), "anchor"):
         return 0
 
     session_id = payload.get("session_id", "unknown")
@@ -1139,29 +1240,57 @@ def cmd_anchor(args) -> int:
 # Module 4 — rule guard
 # ---------------------------------------------------------------------------
 
+def _yaml_scalar(val: str) -> str:
+    val = val.strip()
+    if len(val) >= 2 and val[0] == val[-1] and val[0] in "\"'":
+        return val[1:-1]
+    # Drop a trailing comment on an unquoted value.
+    return re.sub(r"\s+#.*$", "", val)
+
+
 def _load_rules(project_dir: str) -> list:
+    """Parse .slipstream/rules.yaml without a YAML dependency.
+
+    Supports the documented format (match: {tool, command_contains,
+    path_prefix}, action, reason) and the legacy one (on, check, message).
+    """
     rules_path = Path(project_dir) / ".slipstream" / "rules.yaml"
     if not rules_path.exists():
         return []
     try:
-        import re as _re
-        text = rules_path.read_text()
         rules = []
         current: dict = {}
-        for line in text.splitlines():
-            line = line.rstrip()
-            if line.startswith("  - name:") or line.startswith("- name:"):
+        item_indent = -1
+        nested_key = None
+        for raw in rules_path.read_text().splitlines():
+            if not raw.strip() or raw.lstrip().startswith("#"):
+                continue
+            indent = len(raw) - len(raw.lstrip())
+            line = raw.strip()
+            if line.startswith("- "):
                 if current:
                     rules.append(current)
-                current = {"name": line.split(":", 1)[1].strip().strip("\"'")}
-            elif current:
-                for key in ("on", "check", "message", "enabled"):
-                    if _re.match(rf"\s+{key}:", line):
-                        val = line.split(":", 1)[1].strip().strip("\"'")
-                        current[key] = val
+                current, item_indent, nested_key = {}, indent, None
+                line = line[2:].strip()
+                indent += 2
+            elif item_indent < 0 or indent <= item_indent:
+                continue
+            if ":" not in line:
+                continue
+            key, val = line.split(":", 1)
+            key = key.strip()
+            if nested_key and indent > item_indent + 2:
+                current[nested_key][key] = _yaml_scalar(val)
+            elif not val.strip():
+                nested_key = key
+                current[key] = {}
+            else:
+                nested_key = None
+                current[key] = _yaml_scalar(val)
         if current:
             rules.append(current)
-        return [r for r in rules if r.get("enabled", "true").lower() != "false"]
+        return [r for r in rules
+                if r.get("name") and str(r.get("enabled", "true")).lower() != "false"]
     except Exception:
         return []
 
@@ -1170,59 +1299,95 @@ def _matches_command(pattern: str, command: str) -> bool:
     return pattern.lower().strip() in command.lower().strip()
 
 
+def _rule_matches(rule: dict, tool_name: str, tool_input: dict) -> bool:
+    match = rule.get("match")
+    if not isinstance(match, dict):
+        return False
+    tool = match.get("tool")
+    if tool and tool != "*" and tool.lower() != tool_name.lower():
+        return False
+    command = tool_input.get("command", "") if isinstance(tool_input.get("command"), str) else ""
+    contains = match.get("command_contains")
+    if contains and not _matches_command(contains, command):
+        return False
+    regex = match.get("command_regex")
+    if regex:
+        try:
+            if not re.search(regex, command):
+                return False
+        except re.error:
+            return False
+    prefix = match.get("path_prefix")
+    if prefix:
+        candidates = [v for k in ("file_path", "path", "notebook_path")
+                      if isinstance(v := tool_input.get(k), str)]
+        try:
+            candidates += shlex.split(command)
+        except ValueError:
+            candidates += command.split()
+        bare = prefix.lstrip("./")
+        if not any(c.lstrip("./").startswith(bare) or f"/{bare}" in c for c in candidates):
+            return False
+    return bool(tool or contains or regex or prefix)
+
+
 def cmd_guard_check(args) -> int:
-    """PreToolUse hook: enforce rule guard on matching commands. Exit 2 to block."""
+    """PreToolUse hook: enforce rule guard. Exit 2 (reason on stderr) blocks the call."""
     try:
         payload = json.load(sys.stdin)
     except Exception:
         return 0
 
+    if not module_enabled(get_config(), "guard"):
+        return 0
+
     tool_name = payload.get("tool_name", "")
-    tool_input = payload.get("tool_input", {})
+    tool_input = payload.get("tool_input") or {}
     session_id = payload.get("session_id", "unknown")
     cwd = payload.get("cwd", "") or os.getcwd()
 
-    if tool_name != "Bash":
-        return 0
-
-    command = tool_input.get("command", "")
     rules = _load_rules(cwd)
     if not rules:
         return 0
 
+    command = tool_input.get("command", "") if tool_name == "Bash" else ""
     violations = []
     for rule in rules:
+        name = rule["name"]
+        if "match" in rule:
+            if not _rule_matches(rule, tool_name, tool_input):
+                continue
+            action = str(rule.get("action", "block")).lower()
+            violations.append({
+                "rule": name,
+                "action": "warn" if action == "warn" else "block",
+                "message": rule.get("reason") or f"Rule '{name}' matched",
+                "output": "",
+            })
+            continue
+
+        # Legacy rule: run `check` when a Bash command contains `on`.
         pattern = rule.get("on", "")
-        if not pattern or not _matches_command(pattern, command):
-            continue
-
         check_cmd = rule.get("check", "")
-        if not check_cmd:
+        if not command or not pattern or not check_cmd or not _matches_command(pattern, command):
             continue
-
         try:
             result = subprocess.run(
                 check_cmd, shell=True, capture_output=True, text=True, cwd=cwd, timeout=60
             )
             if result.returncode != 0:
-                output = (result.stdout + result.stderr).strip()[:500]
                 violations.append({
-                    "rule": rule["name"],
-                    "message": rule.get("message", f"Rule '{rule['name']}' failed"),
-                    "output": output,
+                    "rule": name,
+                    "action": "block",
+                    "message": rule.get("message") or f"Rule '{name}' failed",
+                    "output": (result.stdout + result.stderr).strip()[:500],
                 })
         except subprocess.TimeoutExpired:
-            violations.append({
-                "rule": rule["name"],
-                "message": f"Rule '{rule['name']}' timed out",
-                "output": "",
-            })
+            violations.append({"rule": name, "action": "block",
+                               "message": f"Rule '{name}' timed out", "output": ""})
         except Exception as e:
-            violations.append({
-                "rule": rule["name"],
-                "message": f"Rule '{rule['name']}' error: {e}",
-                "output": "",
-            })
+            violations.append({"rule": name, "action": "block",
+                               "message": f"Rule '{name}' error: {e}", "output": ""})
 
     if not violations:
         return 0
@@ -1239,14 +1404,20 @@ def cmd_guard_check(args) -> int:
     except Exception:
         pass
 
+    blocks = [v for v in violations if v["action"] == "block"]
+    if not blocks:
+        warning = "; ".join(f"{v['rule']}: {v['message']}" for v in violations)
+        print(json.dumps({"systemMessage": f"[slipstream guard] warning — {warning}"}))
+        return 0
+
     lines = ["[slipstream guard] Blocked — rule violation(s):\n"]
-    for v in violations:
+    for v in blocks:
         lines.append(f"✗ {v['message']}")
         if v["output"]:
             lines.append(f"  {v['output'][:300]}")
         lines.append("")
     lines.append("Fix the issue above, then retry the command.")
-    print("\n".join(lines))
+    print("\n".join(lines), file=sys.stderr)
     return 2
 
 
@@ -1483,10 +1654,6 @@ def cmd_optimize(args) -> int:
 
 def _haiku_decide(prompt: str, context: str) -> dict:
     """Ask Haiku for a structured decision brief on a pending job."""
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        return {}
-
     system = textwrap.dedent("""
         You are a senior engineering advisor. Given a task prompt and optional context,
         produce a concise decision brief. Reply ONLY with valid JSON:
@@ -1502,31 +1669,7 @@ def _haiku_decide(prompt: str, context: str) -> dict:
     user_msg = f"Task: {prompt}"
     if context:
         user_msg += f"\n\nContext:\n{context[:800]}"
-
-    body = json.dumps({
-        "model": "claude-haiku-4-5-20251001",
-        "max_tokens": 512,
-        "system": system,
-        "messages": [{"role": "user", "content": user_msg}],
-    }).encode()
-
-    req = urllib.request.Request(
-        "https://api.anthropic.com/v1/messages",
-        data=body,
-        headers={
-            "x-api-key": api_key,
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read())
-        text = data["content"][0]["text"].strip()
-        return json.loads(text)
-    except Exception:
-        return {}
+    return _haiku_json(system, user_msg, 512, 20)
 
 
 def cmd_decide(args) -> int:
@@ -1554,7 +1697,7 @@ def cmd_decide(args) -> int:
 
     bar = "─" * 62
     print(f"\n{'Slipstream Decision Brief':^62}")
-    print(f"{'powered by Claude Haiku · no data leaves your machine':^62}")
+    print(f"{'powered by Claude Haiku · prompts are sent to the Anthropic API':^62}")
     print(bar)
 
     for job in jobs:

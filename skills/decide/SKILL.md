@@ -15,11 +15,11 @@ Surface Haiku-powered decision briefs for pending queue jobs.
 
 ## What this skill does
 
-When jobs are queued with `slipstream queue add`, they accumulate in a review
+When jobs are queued with `slipstream add`, they accumulate in a review
 backlog. Without analysis, an engineer must re-read each prompt from scratch
 before approving or rejecting — typically 30–60 seconds per job.
 
-`slipstream decide` sends each pending job to `claude-haiku-4-5-20251001` and
+`slipstream decide` sends each pending job to Claude Haiku and
 gets back a structured 4-field brief:
 
 ```
@@ -44,11 +44,12 @@ Instead of reading the full prompt and context (30–60s), the engineer reads th
 ## Requirements
 
 Set `ANTHROPIC_API_KEY` in your environment. Haiku calls are cheap (~$0.0003
-per decision brief). No data is stored or sent anywhere else.
+per decision brief). Each job's prompt, plus the latest anchor's decisions as
+context, is sent to the Anthropic API; nothing is sent anywhere else.
 
 ## Commands
 
 ```bash
 slipstream decide           # show briefs for all pending/approved jobs
-slipstream approve          # interactive bulk-approve with Haiku context shown
+slipstream approve          # interactive review of pending rewrites (run in a terminal)
 ```

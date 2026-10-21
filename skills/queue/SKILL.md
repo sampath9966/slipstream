@@ -25,22 +25,26 @@ Invoked automatically or by the user to inspect and control pending jobs.
 ## Commands
 
 ```bash
-# Add a job to the queue
-slipstream queue add --prompt "Refactor auth module" [--priority high]
+# Add a job to the queue (higher --priority runs first; --after waits for another job)
+slipstream add "Refactor auth module" [--priority 5] [--files a.py b.py] [--after <job_id>]
 
-# List pending jobs
-slipstream queue list
+# List jobs
+slipstream queue list [--status pending_review|approved|running|done|failed]
 
-# Approve jobs for dispatch
-slipstream queue approve <job_id> [<job_id> ...]
+# Review Haiku rewrites interactively (needs a terminal)
+slipstream approve
 
-# Dispatch approved jobs (respects pacing delay)
-slipstream queue dispatch
+# Run the dispatcher in the foreground (respects pacing delay)
+slipstream dispatch
 
-# Install / uninstall OS background service
+# Install / uninstall / check the background dispatcher service
 slipstream service install
 slipstream service uninstall
+slipstream service status
 ```
+
+`slipstream approve` is interactive, so run it in a terminal rather than through
+Claude's Bash tool.
 
 ## Pacing governor
 
@@ -49,7 +53,7 @@ begins inserting delays before each job, ramping linearly from 0 s at the thresh
 to `pacing_max_delay` seconds (default 300 s) at 100% burn. This prevents the
 queue from burning the remaining window before a human can review.
 
-Configure in `~/.slipstream/config.json`:
+Configure in `~/.local/share/slipstream/config.json` (or the plugin's settings):
 ```json
 {
   "pacing_threshold_pct": 60,
@@ -59,7 +63,10 @@ Configure in `~/.slipstream/config.json`:
 
 ## Haiku pre-flight
 
-Before a job is queued, `slipstream queue add` sends the prompt to
-`claude-haiku-4-5-20251001` for a one-sentence summary and cost estimate.
-Set `ANTHROPIC_API_KEY` in your environment; if unset, the pre-flight is skipped
-and the raw prompt is stored as-is.
+Before a job is queued, `slipstream add` sends the prompt to Claude Haiku, which
+checks for vague scope, unresolved references and missing acceptance criteria.
+If Haiku rewrites the prompt, the job waits in `pending_review` until you run
+`slipstream approve`; otherwise it is approved straight away. Set
+`ANTHROPIC_API_KEY` in your environment; if unset, the pre-flight is skipped and
+the raw prompt is approved as-is. The pre-flight sends the prompt to the
+Anthropic API.

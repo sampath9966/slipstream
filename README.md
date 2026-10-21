@@ -146,7 +146,7 @@ slipstream doctor
 ## How it works
 
 ```
-hooks/          Stop, PostToolUse, PreCompact, PostCompact, PreToolUse
+hooks/          Stop, PostToolUse, PreCompact, SessionStart, PreToolUse
 bin/slipstream  Engine — Python 3 stdlib only, no external packages
 skills/         Human interface — one SKILL.md per command
 .slipstream/    Repo-level cache and guard rules (travels with the repo)

@@ -385,3 +385,89 @@ class TestLoadRules:
         assert ss._matches_command("push --force", "git push --force origin main") is True
         assert ss._matches_command("push --force", "git push origin main") is False
         assert ss._matches_command("PUSH --FORCE", "git push --force origin main") is True
+
+
+# ---------------------------------------------------------------------------
+# Audit regressions
+# ---------------------------------------------------------------------------
+
+class TestTurnUsage:
+    def test_sums_every_call_in_turn_once_per_message_id(self, tmp_path):
+        t = write_transcript([
+            {"type": "user", "message": {"role": "user", "content": "go"}},
+            {"type": "assistant", "message": {"id": "m1", "model": "claude-x",
+             "usage": {"input_tokens": 10, "output_tokens": 5}}},
+            {"type": "assistant", "message": {"id": "m1", "model": "claude-x",
+             "usage": {"input_tokens": 10, "output_tokens": 5}}},
+            {"type": "user", "message": {"role": "user",
+             "content": [{"type": "tool_result", "content": "ok"}]}},
+            {"type": "assistant", "message": {"id": "m2", "model": "claude-x",
+             "usage": {"input_tokens": 20, "output_tokens": 7}}},
+        ], tmp_path)
+        u = ss.parse_transcript(str(t))
+        assert u["input_tokens"] == 30
+        assert u["output_tokens"] == 12
+
+    def test_stops_at_previous_prompt(self, tmp_path):
+        t = write_transcript([
+            {"type": "assistant", "message": {"id": "old", "usage": {"input_tokens": 99}}},
+            {"type": "user", "message": {"role": "user", "content": "next"}},
+            {"type": "assistant", "message": {"id": "new", "usage": {"input_tokens": 1}}},
+        ], tmp_path)
+        assert ss.parse_transcript(str(t))["input_tokens"] == 1
+
+
+class TestConfig:
+    def test_reads_config_json_from_data_dir(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("SLIPSTREAM_CONFIG", raising=False)
+        monkeypatch.setenv("SLIPSTREAM_DB", str(tmp_path / "ledger.db"))
+        (tmp_path / "config.json").write_text(json.dumps({"window_tokens": 500}))
+        assert ss.get_config()["window_tokens"] == 500
+
+    def test_plugin_option_env_overrides(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SLIPSTREAM_DB", str(tmp_path / "ledger.db"))
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_WARN_THRESHOLD_PCT", "55")
+        monkeypatch.setenv("CLAUDE_PLUGIN_OPTION_MODULE_GUARD", "false")
+        cfg = ss.get_config()
+        assert cfg["warn_threshold_pct"] == 55
+        assert ss.module_enabled(cfg, "guard") is False
+        assert ss.module_enabled(cfg, "ledger") is True
+
+
+class TestMatchRules:
+    RULES = (
+        "rules:\n"
+        "  - name: no-force-push\n"
+        "    match:\n"
+        "      tool: Bash\n"
+        "      command_regex: 'push\\s(.*\\s)?(--force|-f)(\\s|$)'\n"
+        "    action: block\n"
+        "    reason: \"No force push\"\n"
+        "  - name: warn-rm\n"
+        "    match:\n"
+        "      tool: Bash\n"
+        "      command_contains: \"rm -rf\"\n"
+        "    action: warn\n"
+        "    reason: \"careful\"\n"
+    )
+
+    def load(self, tmp_path):
+        (tmp_path / ".slipstream").mkdir()
+        (tmp_path / ".slipstream" / "rules.yaml").write_text(self.RULES)
+        return ss._load_rules(str(tmp_path))
+
+    def test_parses_nested_match(self, tmp_path):
+        rules = self.load(tmp_path)
+        assert [r["name"] for r in rules] == ["no-force-push", "warn-rm"]
+        assert rules[0]["match"]["tool"] == "Bash"
+        assert rules[1]["action"] == "warn"
+
+    def test_regex_spares_force_with_lease(self, tmp_path):
+        rule = self.load(tmp_path)[0]
+        assert ss._rule_matches(rule, "Bash", {"command": "git push --force origin main"})
+        assert not ss._rule_matches(rule, "Bash", {"command": "git push --force-with-lease"})
+        assert not ss._rule_matches(rule, "Edit", {"command": "git push --force"})
+
+    def test_repo_rules_file_loads(self):
+        rules = ss._load_rules(str(Path(__file__).parent.parent))
+        assert rules and all("match" in r for r in rules)

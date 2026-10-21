@@ -6,6 +6,24 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+- `bin/slipstream` is committed executable again — every hook was failing with "Permission denied"
+- Anchor re-injection moved from `PostCompact` (stdout is not added to context) to `SessionStart` with matcher `compact`
+- Guard now parses the documented `match`/`action`/`reason` rule format; block reasons go to stderr with exit 2, `warn` rules show a warning instead of blocking
+- `no-force-push` rule no longer blocks `--force-with-lease`; new `command_regex` match key
+- Ledger records every API call in a turn (deduplicated by message id), not just the last one
+- Engine reads `~/.local/share/slipstream/config.json` and plugin `userConfig` values; module toggles are honored
+- Skill fallback scripts queried a nonexistent `file_reads` table and compared epoch timestamps with ISO strings
+- Skill docs now match the real CLI (`anchor`, `guard`, `queue`, `decide`); `onboard` uses `when_to_use` instead of an unsupported `trigger` key
+- Queue dispatch no longer passes a nonexistent `--files` flag to `claude -p`; Haiku replies wrapped in code fences are parsed
+- `.claude/settings.json` uses `extraKnownMarketplaces`/`enabledPlugins`; monitor drops an undocumented `${session_id}` variable
+- `.slipstream/last-session.json` is git-ignored in projects that use Slipstream
+- `decide` no longer claims that no data leaves the machine (prompts go to the Anthropic API)
+
+---
+
 ## [0.2.0] — 2026-09-19
 
 ### Added

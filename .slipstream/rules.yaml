@@ -3,7 +3,8 @@ rules:
   - name: no-force-push
     match:
       tool: Bash
-      command_contains: "push --force"
+      # Matches --force / -f but not --force-with-lease
+      command_regex: 'push\s(.*\s)?(--force|-f)(\s|$)'
     action: block
     reason: "Force-push is not allowed. Use --force-with-lease or open a PR."
 

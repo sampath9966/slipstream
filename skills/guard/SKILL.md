@@ -22,15 +22,15 @@ Claude Code to show the block reason to the assistant before the tool runs.
 ## Commands
 
 ```bash
-# Check a tool call against rules (called automatically by PreToolUse hook)
-slipstream guard check --tool-name <name> --tool-input-json '<json>'
+# Generate a starter rules.yaml from CLAUDE.md constraints
+slipstream guard init [--force]
 
-# Generate rules.yaml from CLAUDE.md constraints
-slipstream guard init
-
-# Show loaded rules
-slipstream guard show
+# Test a tool call against the rules (this is what the PreToolUse hook runs)
+echo '{"tool_name":"Bash","tool_input":{"command":"git push --force"},"cwd":"'"$PWD"'"}' \
+  | slipstream guard-check; echo "exit=$?"
 ```
+
+To show the loaded rules, read `.slipstream/rules.yaml` in the project root.
 
 ## rules.yaml format
 
@@ -64,18 +64,27 @@ rules:
 | Key | Description |
 |-----|-------------|
 | `tool` | Tool name (e.g. `Bash`, `Edit`, `Write`) |
-| `command_contains` | Substring match on `command` input field |
+| `command_contains` | Case-insensitive substring match on the `command` input field |
+| `command_regex` | Python regex searched in the `command` input field (single-quote it in YAML) |
 | `path_prefix` | file_path / cwd starts with this prefix |
 
 ### Actions
 
 | Action | Behaviour |
 |--------|-----------|
-| `block` | Exit 2 — Claude Code surfaces the reason and does not run the tool |
-| `warn`  | Log the violation; tool still runs |
+| `block` | Exit 2 with the reason on stderr — Claude sees the reason and the tool does not run |
+| `warn`  | Log the violation and show a warning to the user; the tool still runs |
+
+All keys under `match` must match for a rule to fire. Set `enabled: "false"` on a rule to turn it off.
+
+### Legacy check rules
+
+`slipstream guard init` writes rules in the older check form: when a Bash command
+contains `on`, the shell command in `check` runs in the project root and a non-zero
+exit blocks the call with `message`. Both forms can live in the same file.
 
 ## Initialising from CLAUDE.md
 
 `slipstream guard init` reads the project's `CLAUDE.md`, extracts constraint
-sentences (lines containing "never", "always", "do not", "must not"), and
-produces a starter `rules.yaml`. Review and edit before committing.
+sentences (lines containing "never", "always", "must", "do not", …) as comments, and
+writes a starter `rules.yaml` with check rules disabled. Review and edit before committing.

@@ -5,3 +5,6 @@ __pycache__/
 *.db
 *.db-wal
 *.db-shm
+
+# Per-machine session cache written by the Stop hook
+.slipstream/last-session.json

@@ -1,9 +1,13 @@
 {
-  "plugins": [
-    {
-      "type": "github",
-      "repo": "sampath9966/slipstream",
-      "ref": "main"
+  "extraKnownMarketplaces": {
+    "slipstream": {
+      "source": {
+        "source": "github",
+        "repo": "sampath9966/slipstream"
+      }
     }
-  ]
+  },
+  "enabledPlugins": {
+    "slipstream@slipstream": true
+  }
 }

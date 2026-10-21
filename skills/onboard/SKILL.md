@@ -1,12 +1,12 @@
 ---
 name: onboard
 description: Zero-friction first-run setup for Slipstream — auto-configures everything, no questions asked.
-trigger: install
+when_to_use: When the user says "install slipstream", "set up slipstream", "get started with slipstream", "activate slipstream", or "I just installed slipstream".
 ---
 
 # /slipstream:onboard
 
-Zero-friction onboarding. Runs automatically after install (or manually any time). No questions, no flags, no terminal required.
+Zero-friction onboarding. Run it right after install (or any time). No questions, no flags, no terminal required.
 
 ## What this does
 

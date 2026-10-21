@@ -74,7 +74,7 @@ If found, use those token counts and cost figures for the advisor response.
 python3 - <<'EOF'
 import sqlite3, json, os
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+import time
 
 xdg = os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
 db = Path(os.environ.get("SLIPSTREAM_DB", f"{xdg}/slipstream/ledger.db"))
@@ -85,7 +85,7 @@ if not db.exists():
 
 conn = sqlite3.connect(str(db))
 conn.row_factory = sqlite3.Row
-cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+cutoff = time.time() - 7 * 86400  # ledger ts is epoch seconds
 
 totals = conn.execute("""
     SELECT
@@ -99,10 +99,11 @@ totals = conn.execute("""
 """, (cutoff,)).fetchone()
 
 top_files = conn.execute("""
-    SELECT file_path, COUNT(*) reads
-    FROM file_reads
-    WHERE ts >= ?
-    GROUP BY file_path ORDER BY reads DESC LIMIT 10
+    SELECT je.value file_path, COUNT(*) reads
+    FROM tool_uses, json_each(tool_uses.file_paths) je
+    WHERE tool_uses.tool_name IN ('Read','Edit','Write','MultiEdit')
+      AND tool_uses.file_paths IS NOT NULL AND tool_uses.ts >= ?
+    GROUP BY je.value ORDER BY reads DESC LIMIT 10
 """, (cutoff,)).fetchall()
 
 top_tools = conn.execute("""

@@ -6,7 +6,9 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["record"],
+            "args": [
+              "record"
+            ],
             "timeout": 10,
             "statusMessage": "slipstream: recording turn"
           }
@@ -19,7 +21,9 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["record-tool"],
+            "args": [
+              "record-tool"
+            ],
             "timeout": 5,
             "statusMessage": "slipstream: recording tool use"
           }
@@ -32,22 +36,11 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["anchor-snapshot"],
+            "args": [
+              "anchor-snapshot"
+            ],
             "timeout": 15,
             "statusMessage": "slipstream: snapshotting anchor before compaction"
-          }
-        ]
-      }
-    ],
-    "PostCompact": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["anchor-inject"],
-            "timeout": 15,
-            "statusMessage": "slipstream: re-injecting anchor after compaction"
           }
         ]
       }
@@ -58,11 +51,28 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["warmup"],
+            "args": [
+              "warmup"
+            ],
             "timeout": 10,
             "statusMessage": "slipstream: session warm-up"
           }
-        ]
+        ],
+        "matcher": "startup|resume|clear"
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
+            "args": [
+              "anchor-inject"
+            ],
+            "timeout": 15,
+            "statusMessage": "slipstream: re-injecting anchor after compaction"
+          }
+        ],
+        "matcher": "compact"
       }
     ],
     "PreToolUse": [
@@ -71,7 +81,9 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["guard-check"],
+            "args": [
+              "guard-check"
+            ],
             "timeout": 5,
             "statusMessage": "slipstream: checking rule guard"
           }

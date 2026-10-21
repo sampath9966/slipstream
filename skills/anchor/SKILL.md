@@ -54,18 +54,13 @@ Tell the user: "Paste this block at the start of your next session's first messa
 ## Manual CLI commands (for terminal users)
 
 ```bash
-# Snapshot current session
-slipstream anchor snapshot --session-id <id> --transcript-path <path>
-
-# Re-inject after compaction
-slipstream anchor inject --session-id <id>
-
-# Show saved anchor
-slipstream anchor show --session-id <id>
+# Show the latest saved anchor (most recent session, or a specific one)
+slipstream anchor
+slipstream anchor --session-id <id>
 ```
 
 ## What the anchor block is used for
 
-The `PreCompact` hook calls `slipstream anchor snapshot` automatically before Claude Code compacts the context. The `PostCompact` hook calls `slipstream anchor inject` to re-inject the saved summary.
+The `PreCompact` hook runs `slipstream anchor-snapshot` automatically before Claude Code compacts the context. After compaction, a `SessionStart` hook (matcher `compact`) runs `slipstream anchor-inject`, which adds the saved summary back into Claude's context.
 
 On desktop/mobile where hooks aren't available, you can trigger the same effect manually: ask me "save my anchor" at any point and I'll produce the block above. Paste it into the next session to restore context.

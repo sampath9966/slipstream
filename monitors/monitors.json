@@ -1,8 +1,8 @@
 [
   {
     "name": "slipstream-budget",
-    "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/slipstream\" monitor --session-id \"${session_id}\"",
-    "description": "In-session burn warnings when token usage crosses configured thresholds",
+    "command": "\"${CLAUDE_PLUGIN_ROOT}/bin/slipstream\" monitor",
+    "description": "In-session burn warnings when rolling-window token usage crosses configured thresholds",
     "when": "always"
   }
 ]

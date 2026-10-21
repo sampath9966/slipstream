@@ -21,7 +21,7 @@ No virtualenv required — stdlib + sqlite3 only.
 ## Architecture
 
 ```
-hooks/          Capture layer — Stop, PostToolUse, PreCompact, PostCompact, PreToolUse
+hooks/          Capture layer — Stop, PostToolUse, PreCompact, SessionStart, PreToolUse
 bin/slipstream  Engine — all processing, SQLite reads/writes, CLI
 skills/         Human interface — one SKILL.md per /slipstream:* command
 .slipstream/    Repo-level cache and guard rules

@@ -49,7 +49,7 @@ If found, show output verbatim, then append the dollar savings section below.
 python3 - <<'EOF'
 import sqlite3, json, os
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+import time
 
 xdg = os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
 db = Path(os.environ.get("SLIPSTREAM_DB", f"{xdg}/slipstream/ledger.db"))
@@ -61,15 +61,18 @@ if not db.exists():
 conn = sqlite3.connect(str(db))
 conn.row_factory = sqlite3.Row
 days = 7
-cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+cutoff = time.time() - days * 86400  # ledger ts is epoch seconds
 
 files = conn.execute("""
-    SELECT file_path, COUNT(*) reads FROM file_reads
-    WHERE ts >= ? GROUP BY file_path ORDER BY reads DESC LIMIT 15
+    SELECT je.value file_path, COUNT(*) reads
+    FROM tool_uses, json_each(tool_uses.file_paths) je
+    WHERE tool_uses.tool_name IN ('Read','Edit','Write','MultiEdit')
+      AND tool_uses.file_paths IS NOT NULL AND tool_uses.ts >= ?
+    GROUP BY je.value ORDER BY reads DESC LIMIT 15
 """, (cutoff,)).fetchall()
 
 total_reads = conn.execute(
-    "SELECT COUNT(*) FROM file_reads WHERE ts >= ?", (cutoff,)
+    "SELECT COUNT(*) FROM tool_uses WHERE tool_name IN ('Read','Edit','Write','MultiEdit') AND file_paths IS NOT NULL AND ts >= ?", (cutoff,)
 ).fetchone()[0]
 
 cfg_path = Path(os.environ.get("SLIPSTREAM_CONFIG", f"{xdg}/slipstream/config.json"))

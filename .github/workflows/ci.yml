@@ -15,8 +15,10 @@ jobs:
           python-version: "3.11"
       - run: pip install pytest
       - run: python3 -m pytest tests/ -v
+      - run: python3 -m json.tool hooks/hooks.json > /dev/null && python3 -m json.tool monitors/monitors.json > /dev/null
       - name: Smoke-test engine
         run: |
-          chmod +x bin/slipstream
+          # Hooks exec the engine directly, so it must be committed executable.
+          test -x bin/slipstream || { echo "bin/slipstream is not executable (git update-index --chmod=+x)"; exit 1; }
           bin/slipstream doctor
           bin/slipstream report --json

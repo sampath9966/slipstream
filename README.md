@@ -31,6 +31,13 @@
 
 ```
 /plugin marketplace add sampath9966/slipstream
+/plugin install slipstream@slipstream
+```
+
+On Claude Code 2.1.275 or later, one step does both:
+
+```
+/plugin install slipstream --marketplace sampath9966/slipstream
 ```
 
 That's it. Works immediately in Claude desktop, mobile, CLI, and remote containers. No terminal, no config, no flags required.
@@ -99,7 +106,7 @@ Each module is independently toggleable via plugin config.
 
 ## Data & privacy
 
-**No telemetry. No network calls. Everything stays on your machine.**
+**No telemetry. Everything stays on your machine.** The only network call is optional: if you set `ANTHROPIC_API_KEY`, queue pre-flight (`add`) and `decide` send that job's prompt to the Anthropic API with your key. See [PRIVACY.md](PRIVACY.md).
 
 - Burn ledger: `~/.local/share/slipstream/ledger.db` (SQLite, local only)
 - Session cache: `.slipstream/last-session.json` (travels with your repo)

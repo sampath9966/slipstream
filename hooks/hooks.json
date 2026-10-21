@@ -5,8 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["record"],
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py\" record",
             "timeout": 10,
             "statusMessage": "slipstream: recording turn"
           }
@@ -18,8 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["record-tool"],
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py\" record-tool",
             "timeout": 5,
             "statusMessage": "slipstream: recording tool use"
           }
@@ -31,8 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["anchor-snapshot"],
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py\" anchor-snapshot",
             "timeout": 15,
             "statusMessage": "slipstream: snapshotting anchor before compaction"
           }
@@ -44,8 +41,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["anchor-inject"],
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py\" anchor-inject",
             "timeout": 15,
             "statusMessage": "slipstream: re-injecting anchor after compaction"
           }
@@ -57,8 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["warmup"],
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py\" warmup",
             "timeout": 10,
             "statusMessage": "slipstream: session warm-up"
           }
@@ -70,8 +65,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/slipstream",
-            "args": ["guard-check"],
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py\" guard-check",
             "timeout": 5,
             "statusMessage": "slipstream: checking rule guard"
           }

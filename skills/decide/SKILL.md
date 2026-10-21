@@ -49,6 +49,6 @@ per decision brief). No data is stored or sent anywhere else.
 ## Commands
 
 ```bash
-slipstream decide           # show briefs for all pending/approved jobs
-slipstream approve          # interactive bulk-approve with Haiku context shown
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" decide           # show briefs for all pending/approved jobs
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" approve          # interactive bulk-approve with Haiku context shown
 ```

@@ -12,11 +12,10 @@ Health-check the slipstream installation. Works on every surface.
 **Try the CLI first:**
 
 ```bash
-slipstream doctor
+python3 "${CLAUDE_PLUGIN_ROOT}/scripts/slipstream.py" doctor
 ```
 
 Show the full output. If there are errors, diagnose and fix:
-- "NOT executable" → `chmod +x <path>/bin/slipstream`
 - "cannot open DB" → check `~/.local/share/slipstream/` is writable
 - "not set" for CLAUDE_PLUGIN_ROOT → expected outside Claude Code; hooks won't run but the CLI still works
 

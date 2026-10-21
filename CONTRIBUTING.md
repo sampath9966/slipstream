@@ -13,7 +13,7 @@
 git clone https://github.com/sampath9966/slipstream
 cd slipstream
 python3 -m pytest tests/ -v
-slipstream doctor
+python3 scripts/slipstream.py doctor
 ```
 
 No virtualenv required — stdlib + sqlite3 only.
@@ -22,12 +22,12 @@ No virtualenv required — stdlib + sqlite3 only.
 
 ```
 hooks/          Capture layer — Stop, PostToolUse, PreCompact, PostCompact, PreToolUse
-bin/slipstream  Engine — all processing, SQLite reads/writes, CLI
+scripts/slipstream.py  Engine — all processing, SQLite reads/writes, CLI
 skills/         Human interface — one SKILL.md per /slipstream:* command
 .slipstream/    Repo-level cache and guard rules
 ```
 
-**Design rule:** hooks capture, `bin/` processes, skills are the interface. Hooks must exit cleanly on any error — they never block or crash a session.
+**Design rule:** hooks capture, `scripts/` processes, skills are the interface. Hooks must exit cleanly on any error — they never block or crash a session.
 
 ## Modules
 

@@ -140,12 +140,14 @@ Or set via plugin `userConfig` in Claude Code settings.
 
 ## CLI (optional, for power users)
 
+Run the engine directly from the plugin folder (add `alias slipstream='python3 /path/to/slipstream/scripts/slipstream.py'` to your shell for short commands):
+
 ```bash
 slipstream report --days 7
 slipstream report --json | jq '.per_file[:5]'
 slipstream queue add --prompt "Refactor auth module"
 slipstream anchor snapshot --session-id <id>
-slipstream doctor
+python3 scripts/slipstream.py doctor
 ```
 
 ---
@@ -154,12 +156,12 @@ slipstream doctor
 
 ```
 hooks/          Stop, PostToolUse, PreCompact, PostCompact, PreToolUse
-bin/slipstream  Engine — Python 3 stdlib only, no external packages
+scripts/slipstream.py  Engine — Python 3 stdlib only, no external packages
 skills/         Human interface — one SKILL.md per command
 .slipstream/    Repo-level cache and guard rules (travels with the repo)
 ```
 
-**Design rule:** hooks capture, `bin/` processes, skills are the interface. Hooks exit cleanly on any error and never block a session.
+**Design rule:** hooks capture, `scripts/` processes, skills are the interface. Hooks exit cleanly on any error and never block a session.
 
 ---
 
@@ -167,7 +169,7 @@ skills/         Human interface — one SKILL.md per command
 
 ```bash
 python3 -m pytest tests/ -v
-slipstream doctor
+python3 scripts/slipstream.py doctor
 ```
 
 ---

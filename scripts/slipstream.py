@@ -1663,9 +1663,6 @@ def cmd_doctor(args) -> int:
 
     this = Path(__file__).resolve()
     print(f"  Engine: {this}")
-    if not os.access(this, os.X_OK):
-        print("  Engine: NOT executable — run: chmod +x bin/slipstream")
-        ok = False
 
     system = platform.system()
     if system == "Darwin":

@@ -31,6 +31,13 @@
 
 ```
 /plugin marketplace add sampath9966/slipstream
+/plugin install slipstream@slipstream
+```
+
+On Claude Code 2.1.275 or later, one step does both:
+
+```
+/plugin install slipstream --marketplace sampath9966/slipstream
 ```
 
 That's it. Works immediately in Claude desktop, mobile, CLI, and remote containers. No terminal, no config, no flags required.
